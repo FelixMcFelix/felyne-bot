@@ -1,0 +1,10 @@
+[package]
+name = "felyne-bot"
+version = "0.1.0"
+authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
+
+[dependencies]
+
+[dependencies.serenity]
+features = ["cache", "framework", "standard_framework", "voice", "utils"]
+version = "0.5"
