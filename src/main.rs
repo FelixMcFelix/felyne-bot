@@ -80,14 +80,21 @@ fn main() {
 			.configure(|c| c
 				.prefix("!")
 				.case_insensitivity(true))
-			.command("join", |c| c
-				.known_as("hunt")
+			.command("hunt", |c| c
+				.known_as("join")
 				.check(can_wrangle_cats)
 				.cmd(cmd_join))
-			.command("leave", |c| c
-				.known_as("cart")
+			.command("go-hunt", |c| c
+				.check(can_wrangle_cats)
+				.cmd(cmd_begin_autojoin))
+			.command("cart", |c| c
+				.known_as("leave")
 				.check(can_wrangle_cats)
 				.cmd(cmd_leave))
+			.command("github", |c| c
+				.cmd(cmd_github))
+			.command("ids", |c| c
+				.cmd(cmd_enumerate_voice_channels))
 	);
 
 	// Now, log in.
@@ -140,7 +147,7 @@ command!(cmd_join(ctx, msg, args) {
 });
 
 command!(cmd_begin_autojoin(_ctx, _msg) {
-
+	// TODO: haha?!
 });
 
 command!(cmd_leave(ctx, msg) {
@@ -165,6 +172,35 @@ command!(cmd_leave(ctx, msg) {
 	} else {
 		return confused(&msg);
 	}
+});
+
+command!(cmd_enumerate_voice_channels(_ctx, msg) {
+	let guild = match CACHE.read().guild_channel(msg.channel_id) {
+		Some(c) => c.read().guild_id,
+		None => {
+			return confused(&msg);
+		},
+	};
+
+	let mut content = MessageBuilder::new()
+		.push_bold_line(format!("ChannelIDs for {}:", guild.get().unwrap().name));
+
+	for channel in guild.channels().unwrap().values() {
+		if channel.kind == ChannelType::Voice {
+			content = content.push(&channel.name)
+				.push_bold(" --- ")
+				.push_line(&channel.id);
+		}
+	}
+
+	let out = content.build();
+
+	check_msg(msg.author.dm(|m| m.content(out)))
+});
+
+command!(cmd_github(_ctx, msg) {
+	// yeah whatever
+	check_msg(msg.channel_id.say("Mya! :heart: (https://github.com/FelixMcFelix/felyne-bot)"))
 });
 
 fn check_msg(result: SResult<Message>) {
