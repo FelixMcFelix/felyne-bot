@@ -17,7 +17,7 @@ use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serenity::Result as SResult;
 use serenity::utils::*;
-use serenity::voice;
+use serenity::voice::{opus, pcm, ytdl};
 
 struct VoiceManager;
 
@@ -141,6 +141,17 @@ command!(cmd_join(ctx, msg, args) {
 
 	if manager.join(guild, channel).is_some() {
 		check_msg(msg.channel_id.say("Mrowr!"));
+
+		// test play
+		let handler = manager.get_mut(guild).unwrap();
+
+		// let source = opus(false, File::open("sfx/mewl3.opus").unwrap());
+
+		let source = pcm(false, File::open("sfx/test.wav").unwrap());
+
+		// let source = ytdl("http://www.youtube.com/watch?v=aO-UtBKsrhs").unwrap();
+
+		handler.play(source);
 	} else {
 		return confused(&msg);
 	}
