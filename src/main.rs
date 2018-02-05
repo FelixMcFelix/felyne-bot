@@ -1,6 +1,14 @@
+extern crate rand;
 #[macro_use] extern crate serenity;
 extern crate typemap;
+extern crate rusqlite;
 
+mod dbs;
+
+use dbs::init_db_tables;
+
+use rand::random;
+use rusqlite::{Connection, Result as SQLResult};
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
@@ -103,6 +111,12 @@ impl Key for DeleteWatchcat {
 	type Value = HashMap<GuildId, GuildDeleteData>;
 }
 
+struct FelyneDb;
+
+impl Key for FelyneDb {
+	type Value = Connection;
+}
+
 struct FelyneEvts;
 
 impl EventHandler for FelyneEvts {
@@ -128,6 +142,14 @@ impl EventHandler for FelyneEvts {
 			.entry(guild_id)
 			.or_insert(GuildDeleteData::new(None));
 
+		match select_watchcat(
+			//datas.get::<FelyneDb>().unwrap(),
+			&Connection::open("felyne.db").unwrap(),
+			guild_id) {
+			Ok(chan_id) => {top_dog.output_channel = Some(ChannelId(chan_id))},
+			Err(_) => {},
+		}
+
 		top_dog.backup.add_and_march(msg);
 	}
 
@@ -145,6 +167,14 @@ impl EventHandler for FelyneEvts {
 			.unwrap()
 			.entry(guild_id)
 			.or_insert(GuildDeleteData::new(None));
+
+		match select_watchcat(
+			// datas.get::<FelyneDb>().unwrap(),
+			&Connection::open("felyne.db").unwrap(), 
+			guild_id) {
+			Ok(chan_id) => {top_dog.output_channel = Some(ChannelId(chan_id))},
+			Err(_) => {},
+		}
 
 		report_delete(&top_dog, chan, msg);
 	}
@@ -164,9 +194,34 @@ impl EventHandler for FelyneEvts {
 			.entry(guild_id)
 			.or_insert(GuildDeleteData::new(None));
 
+		match select_watchcat(
+			// datas.get::<FelyneDb>().unwrap(),
+			&Connection::open("felyne.db").unwrap(),
+			guild_id) {
+			Ok(chan_id) => {top_dog.output_channel = Some(ChannelId(chan_id))},
+			Err(_) => {},
+		}
+
 		for msg in msgs {
 			report_delete(&top_dog, chan, msg);
 		}
+	}
+}
+
+fn select_watchcat(db: &Connection, guild_id: GuildId) -> SQLResult<u64> {
+	let GuildId(t_id) = guild_id;
+	db.query_row("SELECT channel_id FROM del_watchcat WHERE guild_id=?", &[&t_id.to_string()],
+		|row| {let r: String = row.get(0); r.parse::<u64>().unwrap()})
+}
+
+fn upsert_watchcat(db: &Connection, guild_id: GuildId, channel_id: ChannelId) {
+	let GuildId(t_g_id) = guild_id;
+	let ChannelId(t_c_id) = channel_id;
+	match db
+		.execute("INSERT OR REPLACE INTO del_watchcat (guild_id, channel_id)
+					VALUES (?,?);", &[&t_g_id.to_string(), &t_c_id.to_string()]) {
+		Err(e) => {println!("Nya?! (Couldn't write del_watchcat db updates.){:?}", e);}
+		Ok(_) => {},
 	}
 }
 
@@ -210,8 +265,6 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 				author_mention = author.mention();
 				author_img = author.face();
 			}
-
-			println!("{}, {}", author_name, author_img);
 			
 			match out_channel.send_message(|m| m
 				.embed(|e| e
@@ -225,10 +278,12 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 							chan.mention(),
 							content))
 					.footer(|f| f
-						.text(format!("ID: {}. Nyarowr...", msg)))
+						.text(format!("ID: {}. Nyarowr... (I think that {} has it...)", msg, MONSTERS[random::<usize>()%MONSTERS.len()])))
 				)
 			) {
-				Ok(mess) => {println!("Apparently sent: {:?}", mess);},
+				Ok(mess) => {
+					// println!("Apparently sent: {:?}", mess);
+				},
 				Err(e) => {println!("{:?}", e);},
 			}
 		},
@@ -239,6 +294,16 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 fn help() {
 	println!("Mrow mia mrowr?! (Myaster! One file! One token?!)");
 }
+
+const MANAGE_ROLES: &'static [&'static str] = &["certified cat wrangler"];
+const MONSTERS: &'static [&'static str] = &[
+	"Jaggi",
+	"Nargacuga",
+	"Barroth",
+	"Zinogre",
+	"Arzuroth",
+	"Deviljho"
+];
 
 fn main() {
 	// Check arg count -- do we have a file??
@@ -262,6 +327,24 @@ fn main() {
 	validate_token(&token_raw)
 		.expect("Naa nya! (Token invalid!)");
 
+	// Init the Database
+	let db = match Connection::open("felyne.db") {
+		Ok(d) => d,
+		Err(e) => {
+			println!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
+			return;
+		}
+	};
+
+	// Try and build tables, if we don't have them.
+	match init_db_tables(&db) {
+		Err(e) => {
+			println!("Nya nya nya?!?! (Couldn't setup db tables: {:?})", e);
+			return;
+		},
+		_ => {},
+	};
+
 	// Establish the bot's config, register all our commands...
 	let mut client = Client::new(&token_raw, FelyneEvts {})
 		.expect("(I couldn't connyect...)");
@@ -271,6 +354,7 @@ fn main() {
 		let mut data = client.data.lock();
 		data.insert::<VoiceManager>(Arc::clone(&client.voice_manager));
 		data.insert::<DeleteWatchcat>(HashMap::new());
+		// data.insert::<FelyneDb>(db);
 	}
 
 	// Register all our nice commands etc.
@@ -281,16 +365,17 @@ fn main() {
 				.case_insensitivity(true))
 			.command("hunt", |c| c
 				.known_as("join")
-				.check(can_wrangle_cats)
+				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_join))
 			.command("go-hunt", |c| c
-				.check(can_wrangle_cats)
+				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_begin_autojoin))
 			.command("cart", |c| c
 				.known_as("leave")
-				.check(can_wrangle_cats)
+				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_leave))
 			.command("log-to", |c| c
+				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_log_to))
 			.command("github", |c| c
 				.cmd(cmd_github))
@@ -300,10 +385,6 @@ fn main() {
 
 	// Now, log in.
 	client.start();
-}
-
-fn can_wrangle_cats(_context: &mut Context, message: &Message, _: &mut Args, _: &CommandOptions) -> bool {
-	true
 }
 
 fn parse_chan_mention(args: &mut Args) -> Option<ChannelId> {
@@ -341,6 +422,17 @@ command!(cmd_log_to(ctx, msg, args) {
 		.or_insert(GuildDeleteData::new(None));
 
 	top_dog.output_channel = Some(out_chan);
+
+	let db = match Connection::open("felyne.db") {
+	    Ok(result) => result,
+	    Err(e) => {println!("DB died becuase... {:?}", e); return confused(&msg);},
+	};
+
+	upsert_watchcat(
+		// datas.get::<FelyneDb>().unwrap(),
+		// &Connection::open("felyne.db").unwrap(),
+		&db,
+		guild_id, out_chan);
 
 	check_msg(msg.channel_id.say("Mrowrorr! (I'll keep you nyotified!)"));
 });

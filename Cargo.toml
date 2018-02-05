@@ -5,6 +5,8 @@ authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
 
 [dependencies]
 typemap = "0.3.3"
+rusqlite = "0.13.0"
+rand = "^0.4"
 
 [dependencies.serenity]
 features = ["cache", "framework", "standard_framework", "voice", "utils"]
