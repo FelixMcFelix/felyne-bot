@@ -5,7 +5,7 @@ extern crate rusqlite;
 
 mod dbs;
 
-use dbs::init_db_tables;
+use dbs::{db_conn, init_db_tables};
 
 use rand::random;
 use rusqlite::{Connection, Result as SQLResult};
@@ -55,7 +55,7 @@ impl <T:Clone> CircQueue<T> {
 		if self.len == self.data.len() {
 			self.base = wrap(self.base, 1, &self.data);
 		} else {
-			self.len = wrap(self.len, 1, &self.data);
+			self.len += 1;
 		}
 
 		self.data[wrap(self.base, self.len-1, &self.data)] = Some(element);
@@ -66,7 +66,7 @@ impl <T:Clone> CircQueue<T> {
 	}
 
 	fn tail(&self) -> &Option<T> {
-		&self.data[wrap(self.base, self.data.len()-1, &self.data)]
+		&self.data[wrap(self.base, self.data.len().max(1)-1, &self.data)]
 	}
 
 	fn get(&self, index: usize) -> &Option<T> {
@@ -136,21 +136,7 @@ impl EventHandler for FelyneEvts {
 			},
 		};
 		
-		let mut datas = ctx.data.lock();
-		let mut top_dog = datas.get_mut::<DeleteWatchcat>()
-			.unwrap()
-			.entry(guild_id)
-			.or_insert(GuildDeleteData::new(None));
-
-		match select_watchcat(
-			//datas.get::<FelyneDb>().unwrap(),
-			&Connection::open("felyne.db").unwrap(),
-			guild_id) {
-			Ok(chan_id) => {top_dog.output_channel = Some(ChannelId(chan_id))},
-			Err(_) => {},
-		}
-
-		top_dog.backup.add_and_march(msg);
+		watchcat(&ctx, guild_id, WatchcatCommand::BufferMsg(msg));
 	}
 
 	fn message_delete(&self, ctx: Context, chan: ChannelId, msg: MessageId) {
@@ -162,21 +148,7 @@ impl EventHandler for FelyneEvts {
 			},
 		};
 		
-		let mut datas = ctx.data.lock();
-		let top_dog = datas.get_mut::<DeleteWatchcat>()
-			.unwrap()
-			.entry(guild_id)
-			.or_insert(GuildDeleteData::new(None));
-
-		match select_watchcat(
-			// datas.get::<FelyneDb>().unwrap(),
-			&Connection::open("felyne.db").unwrap(), 
-			guild_id) {
-			Ok(chan_id) => {top_dog.output_channel = Some(ChannelId(chan_id))},
-			Err(_) => {},
-		}
-
-		report_delete(&top_dog, chan, msg);
+		watchcat(&ctx, guild_id, WatchcatCommand::ReportDelete(chan, vec![msg]));
 	}
 
 	fn message_delete_bulk(&self, ctx: Context, chan: ChannelId, msgs: Vec<MessageId>) {
@@ -188,23 +160,51 @@ impl EventHandler for FelyneEvts {
 			},
 		};
 
-		let mut datas = ctx.data.lock();
-		let mut top_dog = datas.get_mut::<DeleteWatchcat>()
-			.unwrap()
-			.entry(guild_id)
-			.or_insert(GuildDeleteData::new(None));
+		watchcat(&ctx, guild_id, WatchcatCommand::ReportDelete(chan, msgs));
+	}
+}
 
-		match select_watchcat(
-			// datas.get::<FelyneDb>().unwrap(),
-			&Connection::open("felyne.db").unwrap(),
-			guild_id) {
-			Ok(chan_id) => {top_dog.output_channel = Some(ChannelId(chan_id))},
-			Err(_) => {},
-		}
+enum WatchcatCommand {
+	SetChannel(ChannelId),
+	ReportDelete(ChannelId, Vec<MessageId>),
+	BufferMsg(Message),
+}
 
-		for msg in msgs {
-			report_delete(&top_dog, chan, msg);
+fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
+	let mut datas = ctx.data.lock();
+	let mut top_dog = datas.get_mut::<DeleteWatchcat>()
+		.unwrap()
+		.entry(guild_id)
+		.or_insert(GuildDeleteData::new(None));
+
+	let db = db_conn().unwrap();
+
+	match cmd {
+		SetChannel(_) => {},
+		_ => {
+			match select_watchcat(&db, guild_id) {
+				Ok(chan) => {top_dog.output_channel = Some(ChannelId(chan));},
+				_ => {},
+			}
 		}
+	}
+
+	use WatchcatCommand::*;
+
+	match cmd {
+		SetChannel(chan) => {
+			top_dog.output_channel = Some(chan);
+
+			upsert_watchcat(&db, guild_id, chan);
+		},
+		ReportDelete(event_chan, msgs) => {
+			for msg in msgs {
+				report_delete(&top_dog, event_chan, msg);
+			}
+		},
+		BufferMsg(msg) => {
+			top_dog.backup.add_and_march(msg);	
+		},
 	}
 }
 
@@ -328,7 +328,7 @@ fn main() {
 		.expect("Naa nya! (Token invalid!)");
 
 	// Init the Database
-	let db = match Connection::open("felyne.db") {
+	let db = match db_conn() {
 		Ok(d) => d,
 		Err(e) => {
 			println!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
@@ -415,24 +415,7 @@ command!(cmd_log_to(ctx, msg, args) {
 		},
 	};
 
-	let mut datas = ctx.data.lock();
-	let mut top_dog = datas.get_mut::<DeleteWatchcat>()
-		.unwrap()
-		.entry(guild_id)
-		.or_insert(GuildDeleteData::new(None));
-
-	top_dog.output_channel = Some(out_chan);
-
-	let db = match Connection::open("felyne.db") {
-	    Ok(result) => result,
-	    Err(e) => {println!("DB died becuase... {:?}", e); return confused(&msg);},
-	};
-
-	upsert_watchcat(
-		// datas.get::<FelyneDb>().unwrap(),
-		// &Connection::open("felyne.db").unwrap(),
-		&db,
-		guild_id, out_chan);
+	watchcat(&ctx, guild_id, WatchcatCommand::SetChannel(out_chan));
 
 	check_msg(msg.channel_id.say("Mrowrorr! (I'll keep you nyotified!)"));
 });
