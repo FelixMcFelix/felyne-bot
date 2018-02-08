@@ -6,10 +6,12 @@ extern crate rusqlite;
 mod dbs;
 mod watchcat;
 mod constants;
+mod voicehunt;
 
 use dbs::*;
 use watchcat::*;
 use constants::*;
+use voicehunt::*;
 
 use rusqlite::{Connection, Result as SQLResult};
 use std::collections::HashMap;
@@ -79,6 +81,25 @@ impl EventHandler for FelyneEvts {
 
 		watchcat(&ctx, guild_id, WatchcatCommand::ReportDelete(chan, msgs));
 	}
+
+	// Should provide us with a set of full guild info as we connect to each!
+	fn guild_create(&self, ctx: Context, guild: Guild, _is_new: bool) {
+		voicehunt_complete_update(&ctx, guild.id, guild.voice_states)
+	}
+
+	fn voice_state_update(&self, ctx: Context, maybe_guild: Option<GuildId>, vox: VoiceState) {
+		if maybe_guild.is_none() {return;}
+		let guild_id = maybe_guild.unwrap();
+
+		// Okay, now we can get the voice state.
+		voicehunt_update(&ctx, guild_id, vox);
+	}
+
+	fn ready(&self, ctx: Context, rdy: Ready) {
+		ctx.set_game(Game::listening("scary monsters!"));
+
+		println!("{:?}", rdy);
+	}
 }
 
 fn help() {
@@ -134,7 +155,7 @@ fn main() {
 		let mut data = client.data.lock();
 		data.insert::<VoiceManager>(Arc::clone(&client.voice_manager));
 		data.insert::<DeleteWatchcat>(HashMap::new());
-		// data.insert::<FelyneDb>(db);
+		data.insert::<VoiceHunt>(HashMap::new());
 	}
 
 	// Register all our nice commands etc.
@@ -144,14 +165,9 @@ fn main() {
 				.prefix("!")
 				.case_insensitivity(true))
 			.command("hunt", |c| c
-				.known_as("join")
 				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_join))
-			.command("go-hunt", |c| c
-				.allowed_roles(MANAGE_ROLES)
-				.cmd(cmd_begin_autojoin))
 			.command("cart", |c| c
-				.known_as("leave")
 				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_leave))
 			.command("log-to", |c| c
@@ -190,16 +206,6 @@ command!(cmd_log_to(ctx, msg, args) {
 });
 
 command!(cmd_join(ctx, msg, args) {
-	println!("Saw command: !join");
-
-	// Turn first arg (hopefully a channel mention) into a real channel
-	let channel = match args.single::<u64>().ok() {
-		Some(c) => ChannelId(c),
-		None => {
-			return confused(&msg);
-		},
-	};
-
 	// Get the guild ID.
 	let guild = match CACHE.read().guild_channel(msg.channel_id) {
 		Some(c) => c.read().guild_id,
@@ -208,37 +214,46 @@ command!(cmd_join(ctx, msg, args) {
 		},
 	};
 
-	// Invoke some black magic to get the voice manager (???)
-	let mut manager_lock = ctx.data.lock().get::<VoiceManager>().cloned().unwrap();
-	let mut manager = manager_lock.lock();
+	voicehunt_control(&ctx, guild, VoiceHuntJoinMode::Carted);
 
-	if manager.join(guild, channel).is_some() {
-		check_msg(msg.channel_id.say("Mrowr!"));
+	// Turn first arg (hopefully a channel mention) into a real channel
+	voicehunt_control(
+		&ctx,
+		guild,
+		match args.single::<u64>().ok() {
+		Some(c) => {
+			// TODO: make use of string parsing for greeat good.
+			VoiceHuntJoinMode::DirectedHunt(ChannelId(c))
+		},
+		None => {VoiceHuntJoinMode::BraveHunt},
+	});
 
-		// test play
-		let mut handler = manager.get_mut(guild).unwrap();
+	// // Invoke some black magic to get the voice manager (???)
+	// let mut manager_lock = ctx.data.lock().get::<VoiceManager>().cloned().unwrap();
+	// let mut manager = manager_lock.lock();
 
-		let source = ffmpeg("sfx/mewl-wiggle2.ogg").unwrap();
+	// if manager.join(guild, channel).is_some() {
+	// 	check_msg(msg.channel_id.say("Mrowr!"));
 
-		let safe_aud = handler.play_returning(source);
+	// 	// test play
+	// 	let mut handler = manager.get_mut(guild).unwrap();
 
-		{
-			let aud_lock = safe_aud.clone();
-			let mut aud = aud_lock.lock();
+	// 	let source = ffmpeg("sfx/mewl-wiggle2.ogg").unwrap();
 
-			aud.volume(1.0);
-		}
+	// 	let safe_aud = handler.play_returning(source);
 
-		handler.set_bitrate(Bitrate::Bits(512_000));
+	// 	{
+	// 		let aud_lock = safe_aud.clone();
+	// 		let mut aud = aud_lock.lock();
 
+	// 		aud.volume(1.0);
+	// 	}
 
-	} else {
-		return confused(&msg);
-	}
-});
+	// 	handler.set_bitrate(Bitrate::Bits(128_000));
 
-command!(cmd_begin_autojoin(_ctx, _msg) {
-	// TODO: haha?!
+	// } else {
+	// 	return confused(&msg);
+	// }
 });
 
 command!(cmd_leave(ctx, msg) {
@@ -252,20 +267,22 @@ command!(cmd_leave(ctx, msg) {
 		},
 	};
 
-	// Invoke some more black magic (???)
-	let mut manager_lock = ctx.data.lock().get::<VoiceManager>().cloned().unwrap();
-	let mut manager = manager_lock.lock();
-	let is_in_voicechat_here = match manager.get_mut(guild) {
-		Some(handler) => {handler.stop(); true}
-		None => false,
-	};
+	voicehunt_control(&ctx, guild, VoiceHuntJoinMode::Carted);
 
-	if is_in_voicechat_here {
-		manager.remove(guild);
-		check_msg(msg.channel_id.say("Nya..."));
-	} else {
-		return confused(&msg);
-	}
+	// // Invoke some more black magic (???)
+	// let mut manager_lock = ctx.data.lock().get::<VoiceManager>().cloned().unwrap();
+	// let mut manager = manager_lock.lock();
+	// let is_in_voicechat_here = match manager.get_mut(guild) {
+	// 	Some(handler) => {handler.stop(); true}
+	// 	None => false,
+	// };
+
+	// if is_in_voicechat_here {
+	// 	manager.remove(guild);
+	// 	check_msg(msg.channel_id.say("Nya..."));
+	// } else {
+	// 	return confused(&msg);
+	// }
 });
 
 command!(cmd_enumerate_voice_channels(_ctx, msg) {
@@ -302,6 +319,13 @@ pub fn parse_chan_mention(args: &mut Args) -> Option<ChannelId> {
 	let channel_id = parse_channel(chan_name.as_str())?;
 	Some(ChannelId(channel_id))
 }
+
+// pub fn guild_from_chan(channel_id: ChannelId) {
+// 	match CACHE.read().guild_channel(channel_id) {
+// 		Some(c) => c.read().guild_id,
+// 		None => 0,
+// 	};
+// }
 
 pub fn confused(msg: &Message) -> Result<(), CommandError> {
 	check_msg(msg.reply("???"));

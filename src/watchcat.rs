@@ -99,14 +99,10 @@ pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 
 	let db = db_conn().unwrap();
 
-	match cmd {
-		SetChannel(_) => {},
-		_ => {
-			match select_watchcat(&db, guild_id) {
-				Ok(chan) => {top_dog.output_channel = Some(ChannelId(chan));},
-				_ => {},
-			}
-		}
+	if let SetChannel(_) = cmd {
+		
+	} else if let Ok(chan) = select_watchcat(&db, guild_id) {
+		top_dog.output_channel = Some(ChannelId(chan));
 	}
 
 	use WatchcatCommand::*;
