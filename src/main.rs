@@ -84,7 +84,7 @@ impl EventHandler for FelyneEvts {
 
 	// Should provide us with a set of full guild info as we connect to each!
 	fn guild_create(&self, ctx: Context, guild: Guild, _is_new: bool) {
-		voicehunt_complete_update(&ctx, guild.id, guild.voice_states)
+		voicehunt_complete_update(&ctx, guild.id, guild.voice_states);
 	}
 
 	fn voice_state_update(&self, ctx: Context, maybe_guild: Option<GuildId>, vox: VoiceState) {
@@ -97,8 +97,6 @@ impl EventHandler for FelyneEvts {
 
 	fn ready(&self, ctx: Context, rdy: Ready) {
 		ctx.set_game(Game::listening("scary monsters!"));
-
-		println!("{:?}", rdy);
 	}
 }
 
