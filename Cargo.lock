@@ -109,6 +109,7 @@ dependencies = [
 name = "felyne-bot"
 version = "0.1.0"
 dependencies = [
+ "parking_lot 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rusqlite 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serenity 0.5.1 (git+https://github.com/FelixMcFelix/serenity.git?branch=more-voice-work)",

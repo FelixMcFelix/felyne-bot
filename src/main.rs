@@ -1,3 +1,4 @@
+extern crate parking_lot;
 extern crate rand;
 #[macro_use] extern crate serenity;
 extern crate typemap;
@@ -212,18 +213,16 @@ command!(cmd_join(ctx, msg, args) {
 		},
 	};
 
-	voicehunt_control(&ctx, guild, VoiceHuntJoinMode::Carted);
-
 	// Turn first arg (hopefully a channel mention) into a real channel
 	voicehunt_control(
 		&ctx,
 		guild,
 		match args.single::<u64>().ok() {
-		Some(c) => {
-			// TODO: make use of string parsing for greeat good.
-			VoiceHuntJoinMode::DirectedHunt(ChannelId(c))
-		},
-		None => {VoiceHuntJoinMode::BraveHunt},
+			Some(c) => {
+				// TODO: make use of string parsing for greeat good.
+				VoiceHuntJoinMode::DirectedHunt(ChannelId(c))
+			},
+			None => {VoiceHuntJoinMode::BraveHunt},
 	});
 
 	// // Invoke some black magic to get the voice manager (???)

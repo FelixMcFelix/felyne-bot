@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
 
 [dependencies]
+parking_lot = "^0.5"
 typemap = "0.3.3"
 rusqlite = "0.13.0"
 rand = "^0.4"

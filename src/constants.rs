@@ -8,3 +8,4 @@ pub const MONSTERS: &'static [&'static str] = &[
 	"Deviljho"
 ];
 pub const BACKUP_SIZE: usize = 500;
+pub const VOICEHUNT_FRAME_TIME: u64 = 20;
