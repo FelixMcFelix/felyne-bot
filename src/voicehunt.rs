@@ -97,6 +97,7 @@ impl VHState {
 			Carted => {
 				self.send(VoiceHuntMessage::Cart);
 				self.huntsim_tx = None;
+                self.active_channel = None;
 				false
 			},
 			DirectedHunt(chan) => {
@@ -134,17 +135,18 @@ impl VHState {
 		self.user_states = voice_states;
 
 		// This is a complete reset -- regenerate the membership tables.
-		self.population_counts = HashMap::new();
+		// self.population_counts = HashMap::new();
 
 		for vox in self.user_states.clone().values() {
-			if let Some(channel) = vox.channel_id {
-				let count = {
-					let v = self.population_counts.entry(channel).or_insert(0);
-					*v += 1;
-					v.clone()
-				};
-				self.update_incumbent(count, channel);
-			}
+			// if let Some(channel) = vox.channel_id {
+			// 	let count = {
+			// 		let v = self.population_counts.entry(channel).or_insert(0);
+			// 		*v += 1;
+			// 		v.clone()
+			// 	};
+			// 	self.update_incumbent(count, channel);
+			// }
+            self.register_user_state(vox);
 		}
 
 		self.update_channel();
@@ -152,8 +154,8 @@ impl VHState {
 		self
 	}
 
-	fn register_user_state(&mut self, state: VoiceState) -> &mut Self {
-		if let Entry::Occupied(mut prior_state) = self.user_states.clone().entry(state.user_id) {
+	fn register_user_state(&mut self, state: &VoiceState) -> &mut Self {
+		if let Entry::Occupied(prior_state) = self.user_states.clone().entry(state.user_id) {
 			if let Some(channel) = prior_state.get().channel_id {
 				let count = {
 					let v = self.population_counts.entry(channel).or_insert(1);
@@ -173,6 +175,7 @@ impl VHState {
 			self.update_incumbent(count, channel);
 		}
 
+        self.user_states.insert(state.user_id, state.clone());
 
 		self.update_channel();
 
@@ -269,7 +272,7 @@ pub fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
 		.unwrap()
 		.entry(guild_id)
 		.or_insert(VHState::new(guild_id))
-		.register_user_state(vox);
+		.register_user_state(&vox);
 }
 
 pub fn voicehunt_complete_update(ctx: &Context, guild_id: GuildId, voice_states: HashMap<UserId, VoiceState>) {
