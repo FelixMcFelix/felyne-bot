@@ -32,6 +32,7 @@ pub enum VoiceHuntJoinMode {
 #[derive(Debug)]
 enum VoiceHuntMessage {
 	Channel(ChannelId),
+	NoChannel,
 	Cart,
 }
 
@@ -41,6 +42,7 @@ struct Incumbent(u64, ChannelId);
 #[derive(Debug)]
 pub struct VHState {
 	guild_id: GuildId,
+	user_id: UserId,
 	user_states: HashMap<UserId, VoiceState>,
 	population_counts: HashMap<ChannelId, u64>,
 
@@ -53,9 +55,10 @@ pub struct VHState {
 }
 
 impl VHState {
-	fn new(guild_id: GuildId) -> Self {
+	fn new(guild_id: GuildId, user_id: UserId) -> Self {
 		VHState {
 			guild_id,
+			user_id,
 			user_states: HashMap::new(),
 			population_counts: HashMap::new(),
 
@@ -134,27 +137,26 @@ impl VHState {
 	fn register_user_states(&mut self, voice_states: HashMap<UserId, VoiceState>) -> &mut Self {
 		self.user_states = voice_states;
 
-		// This is a complete reset -- regenerate the membership tables.
-		// self.population_counts = HashMap::new();
+		let mut scan_incumbent = false;
 
 		for vox in self.user_states.clone().values() {
-			// if let Some(channel) = vox.channel_id {
-			// 	let count = {
-			// 		let v = self.population_counts.entry(channel).or_insert(0);
-			// 		*v += 1;
-			// 		v.clone()
-			// 	};
-			// 	self.update_incumbent(count, channel);
-			// }
-            self.register_user_state(vox);
+            scan_incumbent |= self.register_user_state(vox, false);
 		}
 
+		if scan_incumbent {
+			self.recalc_incumbent();
+		}
 		self.update_channel();
 
 		self
 	}
 
-	fn register_user_state(&mut self, state: &VoiceState) -> &mut Self {
+	fn register_user_state(&mut self, state: &VoiceState, do_update: bool) -> bool {
+		if state.user_id == self.user_id {
+			return false;
+		}
+
+		let mut scan_incumbent = false;
 		if let Entry::Occupied(prior_state) = self.user_states.clone().entry(state.user_id) {
 			if let Some(channel) = prior_state.get().channel_id {
 				let count = {
@@ -162,7 +164,9 @@ impl VHState {
 					*v -= 1;
 					v.clone()
 				};
-				self.update_incumbent(count, channel);
+
+				// If we lower the incumbent, we need to do a rescan.
+				scan_incumbent |= self.update_incumbent(count, channel);
 			}
 		}
 
@@ -172,23 +176,39 @@ impl VHState {
 				*v += 1;
 				v.clone()
 			};
+
 			self.update_incumbent(count, channel);
 		}
 
         self.user_states.insert(state.user_id, state.clone());
 
-		self.update_channel();
+		if do_update {
+			self.recalc_incumbent();
+			self.update_channel();
+			return false;
+		}
 
-		self
+		scan_incumbent
 	}
 
-	fn update_incumbent(&mut self, count: u64, channel: ChannelId) {
+	fn recalc_incumbent(&mut self) {
+		for (chan, count) in self.population_counts.clone().iter() {
+		    self.update_incumbent(count.clone(), chan.clone());
+		}
+	}
+
+	fn update_incumbent(&mut self, count: u64, channel: ChannelId) -> bool {
 		if let Some(Incumbent(count_old, chan_old)) = self.incumbent_channel {
 			if chan_old == channel || count > count_old {
 				self.incumbent_channel = if count == 0 {None} else {Some(Incumbent(count, channel))};
+
+				count < count_old
+			} else {
+			    false
 			}
 		} else {
-			self.incumbent_channel = Some(Incumbent(count, channel));
+			self.incumbent_channel = if count == 0 {None} else {Some(Incumbent(count, channel))};
+			false
 		}
 	}
 
@@ -198,6 +218,8 @@ impl VHState {
 			self.send(VoiceHuntMessage::Channel(chan));
 		} else if let Some(Incumbent(_, chan)) = self.incumbent_channel {
 			self.send(VoiceHuntMessage::Channel(chan));
+		} else {
+			self.send(VoiceHuntMessage::NoChannel);
 		}
 	}
 }
@@ -229,6 +251,18 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, manager_lock: Arc<Mutex<ClientVoi
 
 				println!("I really want to connect to: {:?}", chan);
 			},
+			Ok(VoiceHuntMessage::NoChannel) => {
+				let mut manager = manager_lock.lock();
+
+				let is_in_voicechat_here = match manager.get_mut(guild_id) {
+					Some(handler) => {handler.stop(); true}
+					None => false,
+				};
+
+				if is_in_voicechat_here {
+					manager.remove(guild_id);
+				}
+			},
 			Ok(VoiceHuntMessage::Cart) => {
 				let mut manager = manager_lock.lock();
 
@@ -258,28 +292,28 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, manager_lock: Arc<Mutex<ClientVoi
 pub fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntJoinMode) {
 	let mut datas = ctx.data.lock();
 	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
-	let mut vh_state = datas.get_mut::<VoiceHunt>()
+	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id))
+		.or_insert(VHState::new(guild_id, CACHE.read().user.id))
 		.join_control(voice_manager_lock, mode);
 }
 
 
 pub fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
 	let mut datas = ctx.data.lock();
-	let mut vh_state = datas.get_mut::<VoiceHunt>()
+	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id))
-		.register_user_state(&vox);
+		.or_insert(VHState::new(guild_id, CACHE.read().user.id))
+		.register_user_state(&vox, true);
 }
 
 pub fn voicehunt_complete_update(ctx: &Context, guild_id: GuildId, voice_states: HashMap<UserId, VoiceState>) {
 	let mut datas = ctx.data.lock();
-	let mut vh_state = datas.get_mut::<VoiceHunt>()
+	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id))
+		.or_insert(VHState::new(guild_id, CACHE.read().user.id))
 		.register_user_states(voice_states);
 }
