@@ -225,32 +225,7 @@ command!(cmd_join(ctx, msg, args) {
 			None => {VoiceHuntJoinMode::BraveHunt},
 	});
 
-	// // Invoke some black magic to get the voice manager (???)
-	// let mut manager_lock = ctx.data.lock().get::<VoiceManager>().cloned().unwrap();
-	// let mut manager = manager_lock.lock();
-
-	// if manager.join(guild, channel).is_some() {
-	// 	check_msg(msg.channel_id.say("Mrowr!"));
-
-	// 	// test play
-	// 	let mut handler = manager.get_mut(guild).unwrap();
-
-	// 	let source = ffmpeg("sfx/mewl-wiggle2.ogg").unwrap();
-
-	// 	let safe_aud = handler.play_returning(source);
-
-	// 	{
-	// 		let aud_lock = safe_aud.clone();
-	// 		let mut aud = aud_lock.lock();
-
-	// 		aud.volume(1.0);
-	// 	}
-
-	// 	handler.set_bitrate(Bitrate::Bits(128_000));
-
-	// } else {
-	// 	return confused(&msg);
-	// }
+	check_msg(msg.channel_id.say("Mrowr!"));
 });
 
 command!(cmd_leave(ctx, msg) {
@@ -265,21 +240,6 @@ command!(cmd_leave(ctx, msg) {
 	};
 
 	voicehunt_control(&ctx, guild, VoiceHuntJoinMode::Carted);
-
-	// // Invoke some more black magic (???)
-	// let mut manager_lock = ctx.data.lock().get::<VoiceManager>().cloned().unwrap();
-	// let mut manager = manager_lock.lock();
-	// let is_in_voicechat_here = match manager.get_mut(guild) {
-	// 	Some(handler) => {handler.stop(); true}
-	// 	None => false,
-	// };
-
-	// if is_in_voicechat_here {
-	// 	manager.remove(guild);
-	// 	check_msg(msg.channel_id.say("Nya..."));
-	// } else {
-	// 	return confused(&msg);
-	// }
 });
 
 command!(cmd_enumerate_voice_channels(_ctx, msg) {
