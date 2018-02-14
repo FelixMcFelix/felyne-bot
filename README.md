@@ -4,8 +4,15 @@ I really cannot be bothered detailing the commands right now.
 
 Get all the necessary sound files with: https://github.com/codestation/mhtools
 
-# Prerequisites
+# Commands
+ * `!hunt` -- Autonomous channel joining mode.
+ * `!hunt <channel_id>` -- Force join channel using its ID.
+ * `!ids` -- Sends a DM with a list of the current server's voice channel IDs.
+ * `!log-to <channel_mention>` -- Log deleted messages in e.g. `#watchtower`.
+ * `!github` -- Print a link to this page.
 
+# Prerequisites
+ * Rust stable
  * libsqlite3-dev
  * ssl-dev
  * pkg-config
