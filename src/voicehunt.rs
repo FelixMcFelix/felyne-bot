@@ -2,20 +2,18 @@ use constants::*;
 use VoiceManager;
 
 use parking_lot::Mutex;
-use rand::{random, thread_rng, Rng};
+use rand::{thread_rng, Rng};
 use rand::distributions::*;
 use serenity::client::*;
 use serenity::client::bridge::voice::ClientVoiceManager;
 use serenity::model::prelude::*;
-use serenity::utils::*;
 use serenity::voice::{ffmpeg, LockedAudio};
 use std::collections::hash_map::{HashMap, Entry};
-use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, Receiver, channel, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
-use typemap::{Key, ShareMap};
+use typemap::Key;
 
 pub struct VoiceHunt;
 
@@ -24,16 +22,18 @@ impl Key for VoiceHunt {
 }
 
 #[derive(Debug)]
-pub enum VoiceHuntJoinMode {
+pub enum VoiceHuntCommand {
 	Carted,
 	BraveHunt,
 	DirectedHunt(ChannelId),
+	Volume(f32),
 }
 
 #[derive(Debug)]
 enum VoiceHuntMessage {
 	Channel(ChannelId),
 	NoChannel,
+	Volume(f32),
 	Cart,
 }
 
@@ -52,7 +52,8 @@ pub struct VHState {
 	user_states: HashMap<UserId, VoiceState>,
 	population_counts: HashMap<ChannelId, u64>,
 
-	join_mode: VoiceHuntJoinMode,
+	join_mode: VoiceHuntCommand,
+	volume: f32,
 
 	active_channel: Option<ChannelId>,
 	incumbent_channel: Option<Incumbent>,
@@ -69,7 +70,8 @@ impl VHState {
 			user_states: HashMap::new(),
 			population_counts: HashMap::new(),
 
-			join_mode: VoiceHuntJoinMode::Carted,
+			join_mode: VoiceHuntCommand::Carted,
+			volume: 1.0,
 
 			active_channel: None,
 			incumbent_channel: None,
@@ -79,24 +81,26 @@ impl VHState {
 		}
 	}
 
-	fn join_control(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, mode: VoiceHuntJoinMode) -> &mut Self {
+	fn control(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, mode: VoiceHuntCommand) -> &mut Self {
 		// Note: we can read from the ShareMap because entrant code is guaranteed to have the lock.
-		use VoiceHuntJoinMode::*;
+		use VoiceHuntCommand::*;
 
 		if let Carted = self.join_mode {
 			match mode {
 				Carted => {},
+				Volume(_) => {},
 				_ => {
 					// Moving from Carted to active mode.
 					// Spawn thread.
 					let (sender, receiver) = channel();
 					let (reverse_sender, reverse_receiver) = channel();
-					let guild_id = self.guild_id;			
+					let guild_id = self.guild_id;
+					let vol = self.volume;
 
 					// Begin!
 					thread::spawn(move || {
 						// Init state here
-						felyne_life(receiver, reverse_sender, vox_manager, guild_id);
+						felyne_life(receiver, reverse_sender, vox_manager, guild_id, vol);
 					});
 
 					self.huntsim_tx = Some(Arc::new(Mutex::new(sender)));
@@ -129,23 +133,29 @@ impl VHState {
 				self.huntsim_tx = None;
 				self.huntsim_rx = None;
 				self.active_channel = None;
+				self.join_mode = mode;
 				false
 			},
 			DirectedHunt(chan) => {
 				// Force new state.
 				self.active_channel = Some(chan);
+				self.join_mode = mode;
 				true
 			},
 			BraveHunt => {
 				// Delete forced state.
 				self.active_channel = None;
+				self.join_mode = mode;
 				true
+			},
+			Volume(vol) => {
+				self.send(VoiceHuntMessage::Volume(vol));
+				self.volume = vol;
+				false
 			}
 		};
 
 		if chan_change {self.update_channel();} // Now set the channel.
-
-		self.join_mode = mode;
 
 		self
 	}
@@ -155,7 +165,10 @@ impl VHState {
 			Some(lock_arc) => {
 				let lock = lock_arc.clone();
 				let tx = lock.lock();
-				tx.send(msg);
+
+				if let Err(e) = tx.send(msg) {
+					println!("[VoiceHunt] Failed to send message: {:?}", e);
+				}
 			},
 			None => {},
 		}
@@ -251,7 +264,7 @@ impl VHState {
 }
 
 #[inline]
-fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId) {
+fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, really_quit: bool) {
 	let mut manager = manager_lock.lock();
 
 	let is_in_voicechat_here = match manager.get_mut(guild_id) {
@@ -259,7 +272,7 @@ fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: Guil
 		None => false,
 	};
 
-	if is_in_voicechat_here {
+	if really_quit && is_in_voicechat_here {
 		manager.remove(guild_id);
 	}
 }
@@ -268,11 +281,13 @@ fn random_element<'a, T, R: Rng>(arr: &'a[T], rng: &mut R) -> &'a T {
 	&arr[Range::new(0, arr.len()).ind_sample(rng)]
 }
 
-fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId) {
+fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, vol: f32) {
 	let timer = Duration::from_millis(VOICEHUNT_FRAME_TIME);
 	let mut rng = thread_rng();
 	let vol_range = Range::new(0.2,0.5);
 	let bgm_vol_range = Range::new(0.15,0.2);
+
+	let mut curr_vol = vol;
 
 	let mut curr_noice: Option<LockedAudio> = None;
 	let mut curr_bgm: Option<LockedAudio> = None;
@@ -283,54 +298,69 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 	let mut next_noice = Duration::new(0, 0);
 	let mut next_bgm_intro = Duration::from_secs(0);
-	let mut next_bgm = Duration::new(0, 0);
 
 	let mut leaving = false;
+
+	let mut curr_chan = None;
 
 	'escape: loop {
 		match rx.try_recv() {
 			Ok(VoiceHuntMessage::Channel(chan)) => {
-				// Reset state!
-				curr_noice = None;
-				curr_bgm = None;
+				let true_reconnect = match curr_chan {
+					Some(chan_old) => {
+						if chan_old != chan {
+							quit_vox_channel(manager_lock.clone(), guild_id, false);
+	
+							// Reset state!
+							curr_noice = None;
+							curr_bgm = None;
+							true
+						} else {false}
+					},
+					None => true,
+				};
 
 				// Connect to a different vox channel.
 				let mut manager = manager_lock.lock();
 
-				if manager.join(guild_id, chan).is_some() {
-					// test play
-					let mut handler = manager.get_mut(guild_id).unwrap();
+				if true_reconnect {
+					if manager.join(guild_id, chan).is_some() {
+						// test play
+						let mut handler = manager.get_mut(guild_id).unwrap();
 
-					let source = ffmpeg(format!("bgm/{}",
-						if last_bgm_intro.elapsed() > next_bgm_intro {
-							last_bgm_intro = Instant::now();
-							next_noice = Duration::from_secs(13);
-							next_bgm_intro = Duration::from_secs(300);
-							random_element(START, &mut rng)
-						} else {
-							random_element(AMBIENCE, &mut rng)
-						})).unwrap();
+						let source = ffmpeg(format!("bgm/{}",
+							if last_bgm_intro.elapsed() > next_bgm_intro {
+								last_bgm_intro = Instant::now();
+								next_noice = Duration::from_secs(13);
+								next_bgm_intro = Duration::from_secs(300);
+								random_element(START, &mut rng)
+							} else {
+								random_element(AMBIENCE, &mut rng)
+							})).unwrap();
 
-					let safe_aud = handler.play_returning(source);
+						let safe_aud = handler.play_returning(source);
 
-					{
-						let aud_lock = safe_aud.clone();
-						let mut aud = aud_lock.lock();
+						{
+							let aud_lock = safe_aud.clone();
+							let mut aud = aud_lock.lock();
 
-						aud.volume(1.0);
+							aud.volume(1.0 * curr_vol);
+						}
+
+						curr_bgm = Some(safe_aud);
+						curr_chan = Some(chan);
+					} else {
+						println!("Failed to connect to {:?}!", chan);
 					}
-
-					curr_bgm = Some(safe_aud);
-				} else {
-					println!("Failed to connect to {:?}!", chan);
 				}
 			},
 			Ok(VoiceHuntMessage::NoChannel) => {
-				quit_vox_channel(manager_lock.clone(), guild_id);
+				quit_vox_channel(manager_lock.clone(), guild_id, true);
+				curr_chan = None;
 			},
 			Ok(VoiceHuntMessage::Cart) => {
 				if leaving {
-					quit_vox_channel(manager_lock.clone(), guild_id);
+					quit_vox_channel(manager_lock.clone(), guild_id, true);
 					break 'escape;
 				} else {
 					leaving = true;
@@ -360,12 +390,31 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 							let aud_lock = safe_aud.clone();
 							let mut aud = aud_lock.lock();
 		
-							aud.volume(0.6);
+							aud.volume(0.6 * curr_vol);
 						}
 	
 						outro = Some(safe_aud);
 					}
 				}
+			},
+			Ok(VoiceHuntMessage::Volume(new_vol)) => {
+				if let Some(ref safe) = curr_noice {
+					let lock = safe.clone();
+					let mut aud = lock.lock();
+
+					aud.volume /= curr_vol;
+					aud.volume *= new_vol;
+				}
+
+				if let Some(ref safe) = curr_bgm {
+					let lock = safe.clone();
+					let mut aud = lock.lock();
+
+					aud.volume /= curr_vol;
+					aud.volume *= new_vol;
+				}
+
+				curr_vol = new_vol;
 			},
 			Err(TryRecvError::Empty) => {
 				// If we receieved nothing, then we can perform an update.
@@ -403,7 +452,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 									let aud_lock = safe_aud.clone();
 									let mut aud = aud_lock.lock();
 				
-									aud.volume(vol_range.ind_sample(&mut rng));
+									aud.volume(vol_range.ind_sample(&mut rng) * curr_vol);
 								}
 			
 								curr_noice = Some(safe_aud);
@@ -419,7 +468,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 								let aud_lock = safe_aud2.clone();
 								let mut aud = aud_lock.lock();
 			
-								aud.volume(bgm_vol_range.ind_sample(&mut rng));
+								aud.volume(bgm_vol_range.ind_sample(&mut rng) * curr_vol);
 							}
 		
 							curr_bgm = Some(safe_aud2);
@@ -435,7 +484,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				};
 
 				if leaving && outro_done {
-					quit_vox_channel(manager_lock.clone(), guild_id);
+					quit_vox_channel(manager_lock.clone(), guild_id, true);
 					break 'escape;
 				}
 
@@ -446,17 +495,19 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 			},
 		}
 	}
-	tx.send(VoiceHuntResponse::Done);
+	tx.send(VoiceHuntResponse::Done)
+		.expect(
+			format!("[VoiceHunt] Final Done send for {:?}'s handler failed.", guild_id).as_str());
 }
 
-pub fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntJoinMode) {
+pub fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntCommand) {
 	let mut datas = ctx.data.lock();
 	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
 		.or_insert(VHState::new(guild_id, CACHE.read().user.id))
-		.join_control(voice_manager_lock, mode);
+		.control(voice_manager_lock, mode);
 }
 
 

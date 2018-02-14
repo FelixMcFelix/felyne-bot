@@ -14,7 +14,6 @@ use watchcat::*;
 use constants::*;
 use voicehunt::*;
 
-use rusqlite::{Connection, Result as SQLResult};
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
@@ -24,12 +23,11 @@ use typemap::Key;
 
 use serenity::client::*;
 use serenity::client::bridge::voice::ClientVoiceManager;
-use serenity::framework::standard::{Args, CommandError, DispatchError, StandardFramework, HelpBehaviour, CommandOptions, help_commands};
+use serenity::framework::standard::{Args, CommandError, StandardFramework};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 use serenity::Result as SResult;
 use serenity::utils::*;
-use serenity::voice::{opus, pcm, ytdl, ffmpeg, Bitrate};
 
 struct VoiceManager;
 
@@ -41,11 +39,6 @@ struct FelyneEvts;
 
 impl EventHandler for FelyneEvts {
 	fn message(&self, ctx: Context, msg: Message) {
-		// match msg.channel_id.say("Mreow!") {
-		//  Ok(_) => println!("Send!"),
-		//  Err(_) => println!("Not send!"),
-		// };
-
 		// Place the message in our "deleted messages cache".
 		// This should probably be the last action...
 		// Get the guild ID.
@@ -96,7 +89,7 @@ impl EventHandler for FelyneEvts {
 		voicehunt_update(&ctx, guild_id, vox);
 	}
 
-	fn ready(&self, ctx: Context, rdy: Ready) {
+	fn ready(&self, ctx: Context, _rdy: Ready) {
 		ctx.set_game(Game::listening("scary monsters!"));
 	}
 }
@@ -169,6 +162,10 @@ fn main() {
 			.command("cart", |c| c
 				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_leave))
+			.command("volume", |c| c
+				.known_as("vol")
+				.allowed_roles(MANAGE_ROLES)
+				.cmd(cmd_volume))
 			.command("log-to", |c| c
 				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_log_to))
@@ -179,7 +176,7 @@ fn main() {
 	);
 
 	// Now, log in.
-	client.start();
+	client.start().expect("Argh! I couldn't connyect?!");
 }
 
 command!(cmd_log_to(ctx, msg, args) {
@@ -220,17 +217,15 @@ command!(cmd_join(ctx, msg, args) {
 		match args.single::<u64>().ok() {
 			Some(c) => {
 				// TODO: make use of string parsing for greeat good.
-				VoiceHuntJoinMode::DirectedHunt(ChannelId(c))
+				VoiceHuntCommand::DirectedHunt(ChannelId(c))
 			},
-			None => {VoiceHuntJoinMode::BraveHunt},
+			None => {VoiceHuntCommand::BraveHunt},
 	});
 
 	check_msg(msg.channel_id.say("Mrowr!"));
 });
 
 command!(cmd_leave(ctx, msg) {
-	println!("Saw command: !leave");
-
 	// Get the guild ID.
 	let guild = match CACHE.read().guild_channel(msg.channel_id) {
 		Some(c) => c.read().guild_id,
@@ -239,8 +234,30 @@ command!(cmd_leave(ctx, msg) {
 		},
 	};
 
-	voicehunt_control(&ctx, guild, VoiceHuntJoinMode::Carted);
+	voicehunt_control(&ctx, guild, VoiceHuntCommand::Carted);
 });
+
+command!(cmd_volume(ctx, msg, args) {
+	// Get the guild ID.
+	let guild = match CACHE.read().guild_channel(msg.channel_id) {
+		Some(c) => c.read().guild_id,
+		None => {
+			return confused(&msg);
+		},
+	};
+
+	let vol = match args.single::<f32>().ok() {
+		Some(c) => c,
+		None => {return confused(&msg);},
+	};
+
+	if !vol.is_finite() || vol < 0.0 || vol > 2.0 {
+		return confused(&msg);	
+	}
+
+	voicehunt_control(&ctx, guild, VoiceHuntCommand::Volume(vol));
+});
+
 
 command!(cmd_enumerate_voice_channels(_ctx, msg) {
 	let guild = match CACHE.read().guild_channel(msg.channel_id) {

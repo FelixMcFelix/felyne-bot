@@ -145,7 +145,7 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 	match delete_data.output_channel {
 		Some(out_channel) => {
 			// Watchdog messages should be removable, if needed!
-			if (out_channel == chan) {return;}
+			if out_channel == chan {return;}
 			// Try to find it!
 			let msgs = &delete_data.backup;
 			let len = delete_data.backup.len;
