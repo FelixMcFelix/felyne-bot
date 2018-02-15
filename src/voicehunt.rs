@@ -281,11 +281,45 @@ fn random_element<'a, T, R: Rng>(arr: &'a[T], rng: &mut R) -> &'a T {
 	&arr[Range::new(0, arr.len()).ind_sample(rng)]
 }
 
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum BgmClass {
+	NoBgm,
+	Intro,
+	Ambience,
+	Music,
+	Bonuser,
+	Force,
+}
+
+impl BgmClass {
+	fn no_gargwa(self) -> bool {
+		use self::BgmClass::*;
+
+		self == Music ||
+		self == Bonuser ||
+		self == Force
+	}
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+enum SfxClass {
+	NoSfx,
+	Cat,
+	Bonus,
+	Force,
+}
+
 fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, vol: f32) {
 	let timer = Duration::from_millis(VOICEHUNT_FRAME_TIME);
 	let mut rng = thread_rng();
-	let vol_range = Range::new(0.2,0.5);
+	let vol_range = Range::new(0.3,0.4);
 	let bgm_vol_range = Range::new(0.15,0.2);
+	let music_vol = 0.3;
+
+	let noice_range = Range::new(600, 7_000);
+	let bonus_time_range = Range::new(20_000,60_000);
+	let bonuser_time_range = Range::new(600_000,1200_000);
+	let bgm_time_range = Range::new(300_000,600_000);
 
 	let mut curr_vol = vol;
 
@@ -293,11 +327,23 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 	let mut curr_bgm: Option<LockedAudio> = None;
 	let mut outro: Option<LockedAudio> = None;
 
+	let mut curr_noice_class = SfxClass::NoSfx;
+	let mut curr_bgm_class = BgmClass::NoBgm;
+
+	let mut force_next_aud: Option<&str> = None;
+	let mut force_next_bgm: Option<&str> = None;
+
 	let mut last_noice = Instant::now();
+	let mut last_noice_bonus = Instant::now();
+	let mut last_bgm_bonuser = Instant::now();
 	let mut last_bgm_intro = Instant::now();
+	let mut last_bgm = Instant::now();
 
 	let mut next_noice = Duration::new(0, 0);
+	let mut next_noice_bonus = Duration::from_millis(bonus_time_range.ind_sample(&mut rng));
+	let mut next_bgm_bonuser = Duration::from_millis(bonuser_time_range.ind_sample(&mut rng));
 	let mut next_bgm_intro = Duration::from_secs(0);
+	let mut next_bgm = Duration::from_millis(bgm_time_range.ind_sample(&mut rng));
 
 	let mut leaving = false;
 
@@ -333,8 +379,10 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 								last_bgm_intro = Instant::now();
 								next_noice = Duration::from_secs(13);
 								next_bgm_intro = Duration::from_secs(300);
+								curr_bgm_class = BgmClass::Intro;
 								random_element(START, &mut rng)
 							} else {
+								curr_bgm_class = BgmClass::Ambience;
 								random_element(AMBIENCE, &mut rng)
 							})).unwrap();
 
@@ -420,16 +468,24 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				// If we receieved nothing, then we can perform an update.
 				// Iteration, then wait.
 
-				let play_new = curr_noice.is_none() || {
+				let play_new = curr_bgm_class != BgmClass::Bonuser && (curr_noice.is_none() || {
 					let lock = curr_noice.as_ref().expect("wtf").clone();
 					let aud = lock.lock();
 
+					if aud.finished {
+						curr_noice_class = SfxClass::NoSfx;
+					}
+
 					aud.finished
-				};
+				});
 
 				let play_new_bgm = curr_bgm.is_none() || {
 					let lock = curr_bgm.as_ref().expect("wtf").clone();
 					let aud = lock.lock();
+
+					if aud.finished {
+						curr_bgm_class = BgmClass::NoBgm;
+					}
 
 					aud.finished
 				};
@@ -439,12 +495,30 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 					
 					if let Some(mut handler) = manager.get_mut(guild_id){
 						if play_new {
-							
-							if last_noice.elapsed() > next_noice {
-								last_noice = Instant::now();
-								next_noice = Duration::from_millis(Range::new(600, 7000).ind_sample(&mut rng));
+							let sfx_name =
+								if let Some(aud_name) = force_next_aud {
+									force_next_aud = None;
+									last_noice = Instant::now();
+									next_noice = Duration::from_millis(0);
+									curr_noice_class = SfxClass::Force;
+									aud_name
+								} else if last_noice_bonus.elapsed() > next_noice_bonus && curr_bgm_class.no_gargwa() {
+									last_noice_bonus = Instant::now();
+									next_noice_bonus = Duration::from_millis(bonus_time_range.ind_sample(&mut rng));
+									curr_noice_class = SfxClass::Bonus;
+									random_element(BONUS_SFX, &mut rng)
+								} else if last_noice.elapsed() > next_noice {
+									last_noice = Instant::now();
+									next_noice = Duration::from_millis(noice_range.ind_sample(&mut rng));
+									curr_noice_class = SfxClass::Cat;
+									random_element(SFX, &mut rng)
+								} else {
+									""
+								};
 
-								let source = ffmpeg(format!("sfx/{}", random_element(SFX, &mut rng))).unwrap();
+							if !sfx_name.is_empty(){
+
+								let source = ffmpeg(format!("sfx/{}", sfx_name)).unwrap();
 
 								let safe_aud = handler.play_returning(source);
 			
@@ -456,22 +530,49 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 								}
 			
 								curr_noice = Some(safe_aud);
-							};
+							}
 						}
 
-						if play_new_bgm{
-							let source2 = ffmpeg(format!("bgm/{}", random_element(AMBIENCE, &mut rng))).unwrap();
-							
-							let safe_aud2 = handler.play_returning(source2);
+						if play_new_bgm {
+
+							let bgm_name =
+								if let Some(aud_name) = force_next_bgm {
+									force_next_bgm = None;
+									last_bgm = Instant::now();
+									next_bgm = Duration::from_millis(0);
+									curr_bgm_class = BgmClass::Force;
+									aud_name
+								} else if last_bgm_bonuser.elapsed() > next_bgm_bonuser {
+									last_bgm_bonuser = Instant::now();
+									next_bgm_bonuser = Duration::from_millis(bonuser_time_range.ind_sample(&mut rng));
+									curr_bgm_class = BgmClass::Bonuser;
+									force_next_bgm = Some(&random_element(BONUSER_SFX_FOLLOW, &mut rng));
+									BONUSER_SFX
+								} else if last_bgm.elapsed() > next_bgm {
+									last_bgm = Instant::now();
+									next_bgm = Duration::from_millis(bgm_time_range.ind_sample(&mut rng));
+									curr_bgm_class = BgmClass::Music;
+									random_element(BGM, &mut rng)
+								} else {
+									curr_bgm_class = BgmClass::Ambience;
+									random_element(AMBIENCE, &mut rng)
+								};
+
+							if !bgm_name.is_empty(){
+
+								let source2 = ffmpeg(format!("bgm/{}", bgm_name)).unwrap();
+
+								let safe_aud2 = handler.play_returning(source2);
+				
+								{
+									let aud_lock = safe_aud2.clone();
+									let mut aud = aud_lock.lock();
+				
+									aud.volume(if curr_bgm_class.no_gargwa() {music_vol} else {bgm_vol_range.ind_sample(&mut rng)} * curr_vol);
+								}
 			
-							{
-								let aud_lock = safe_aud2.clone();
-								let mut aud = aud_lock.lock();
-			
-								aud.volume(bgm_vol_range.ind_sample(&mut rng) * curr_vol);
+								curr_bgm = Some(safe_aud2);
 							}
-		
-							curr_bgm = Some(safe_aud2);
 						}
 					}
 				}

@@ -30,10 +30,16 @@ pub const SFX: &'static [&'static str] = &[
 ];
 
 pub const BONUS_SFX: &'static [&'static str] = &[
-	"5796.wav",
 	"gargwa1.opus",
 	"gargwa2.opus",
 	"gargwa3.opus",
+];
+
+pub const BONUSER_SFX: &'static str = "5796.wav";
+
+pub const BONUSER_SFX_FOLLOW: &'static [&'static str] = &[
+	"5797.wav",
+	"5798.wav",
 ];
 
 pub const SLEEP: &'static str = "5799.wav";
@@ -55,4 +61,10 @@ pub const AMBIENCE: &'static [&'static str] = &[
 	"5830.wav",
 	"5831.wav",
 	"5832.wav",
+];
+
+pub const BGM: &'static [&'static str] = &[
+	"5815.wav",
+	"5816.wav",
+	"5817.wav",
 ];
