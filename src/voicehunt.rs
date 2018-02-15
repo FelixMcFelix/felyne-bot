@@ -502,7 +502,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 									next_noice = Duration::from_millis(0);
 									curr_noice_class = SfxClass::Force;
 									aud_name
-								} else if last_noice_bonus.elapsed() > next_noice_bonus && curr_bgm_class.no_gargwa() {
+								} else if last_noice_bonus.elapsed() > next_noice_bonus && !curr_bgm_class.no_gargwa() {
 									last_noice_bonus = Instant::now();
 									next_noice_bonus = Duration::from_millis(bonus_time_range.ind_sample(&mut rng));
 									curr_noice_class = SfxClass::Bonus;
