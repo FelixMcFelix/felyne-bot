@@ -201,7 +201,7 @@ impl VHState {
 			if let Some(channel) = prior_state.get().channel_id {
 				let count = {
 					let v = self.population_counts.entry(channel).or_insert(1);
-					*v -= 1;
+					*v = *v.max(&mut 1) - 1;
 					v.clone()
 				};
 
@@ -253,6 +253,7 @@ impl VHState {
 	}
 
 	fn update_channel(&mut self) {
+        println!("{:?}", self.population_counts);
 		if let Some(chan) = self.active_channel {
 			self.send(VoiceHuntMessage::Channel(chan));
 		} else if let Some(Incumbent(_, chan)) = self.incumbent_channel {
