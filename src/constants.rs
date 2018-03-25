@@ -67,4 +67,6 @@ pub const BGM: &'static [&'static str] = &[
 	"5815.wav",
 	"5816.wav",
 	"5817.wav",
+	"6383.wav",
+	"6384.wav",
 ];
