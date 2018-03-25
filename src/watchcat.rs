@@ -169,10 +169,20 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 			let mut author_img = String::new();
 			let mut author_name = String::from("Unknyown author");
 			let mut author_mention = String::from("Unknyown author");
+			let mut attachment_text = String::new();
 
 			if msg_full.is_some() {
 				let message = msg_full.unwrap();
 				content = message.content_safe();
+
+				attachment_text = message.attachments.iter().enumerate().fold(
+					attachment_text,
+					|acc, (i, element)| acc + match i {
+						0 => "",
+						_ => ", ",
+					} + &element.proxy_url + "\n"
+				);
+
 				let author = &message.author;
 				author_name = author.tag();
 				author_mention = author.mention();
@@ -180,8 +190,8 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 			}
 			
 			match out_channel.send_message(|m| m
-				.embed(|e| e
-					.colour(Colour::from_rgb(236, 98, 0))
+				.embed(|e| {
+					let base = e.colour(Colour::from_rgb(236, 98, 0))
 					.author(|a| a
 						.name(author_name.as_str())
 						.icon_url(author_img.as_str()))
@@ -191,8 +201,18 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 							chan.mention(),
 							content))
 					.footer(|f| f
-						.text(format!("ID: {}. Nyarowr... (I think that {} has it...)", msg, MONSTERS[random::<usize>()%MONSTERS.len()])))
-				)
+						.text(format!("ID: {}. Nyarowr... (I think that {} has it...)", msg, MONSTERS[random::<usize>()%MONSTERS.len()])));
+
+					if !attachment_text.is_empty() {
+						base.field(
+							"I think they dropped something!",
+							attachment_text,
+							true
+						)
+					} else {
+						base
+					}
+				})
 			) {
 				Ok(_) => {
 					// println!("Apparently sent: {:?}", mess);

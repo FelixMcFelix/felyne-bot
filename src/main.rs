@@ -49,6 +49,7 @@ impl EventHandler for FelyneEvts {
 			},
 		};
 		
+		// println!("{:?}", msg);
 		watchcat(&ctx, guild_id, WatchcatCommand::BufferMsg(msg));
 	}
 
