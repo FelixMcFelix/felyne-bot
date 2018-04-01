@@ -171,17 +171,14 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 			let mut author_mention = String::from("Unknyown author");
 			let mut attachment_text = String::new();
 
-			if msg_full.is_some() {
+			if let Some(message) = msg_full {
 				let message = msg_full.unwrap();
 				content = message.content_safe();
 
-				attachment_text = message.attachments.iter().enumerate().fold(
-					attachment_text,
-					|acc, (i, element)| acc + match i {
-						0 => "",
-						_ => ", ",
-					} + &element.proxy_url + "\n"
-				);
+				attachment_text = match message.attachments.len() {
+					n if n <= 0 => String::new(),
+					n @ _ => format!("{} attachment{}! I'm digging them up---wait patiently, nya!", n, if n > 1 {"s"} else {""}),
+				};
 
 				let author = &message.author;
 				author_name = author.tag();
@@ -218,6 +215,18 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 					// println!("Apparently sent: {:?}", mess);
 				},
 				Err(e) => {println!("{:?}", e);},
+			}
+
+			if let Some(message) = msg_full {
+				for (i, a) in message.attachments.iter().enumerate() {
+					match a.download() {
+						Ok(val) => {
+							let block = vec![(val.as_slice(), a.filename.as_str())];
+							out_channel.send_files(block, |m| m.content(format!("Myah! {}: file {}!", msg, i)));
+						},
+						Err(e) => println!("Couldn't download attachment {}: {:?}", a.filename, e),
+					}
+				}
 			}
 		},
 		None => {},
