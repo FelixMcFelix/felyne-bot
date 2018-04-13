@@ -7,13 +7,40 @@ use rand::distributions::*;
 use serenity::client::*;
 use serenity::client::bridge::voice::ClientVoiceManager;
 use serenity::model::prelude::*;
-use serenity::voice::{ffmpeg, LockedAudio};
+use serenity::voice::{ffmpeg, AudioReceiver, LockedAudio};
 use std::collections::hash_map::{HashMap, Entry};
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, Receiver, channel, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 use typemap::Key;
+
+struct VoiceHuntReceiver;
+
+impl VoiceHuntReceiver {
+	pub fn new() -> Self { 
+		Self { }
+	}
+}
+
+impl AudioReceiver for VoiceHuntReceiver {
+	fn speaking_update(&mut self, _ssrc: u32, _user_id: u64, _speaking: bool) {
+		// You can implement logic here so that you can differentiate users'
+		// SSRCs and map the SSRC to the User ID and maintain a state in
+		// `Receiver`. Using this map, you can map the `ssrc` in `voice_packet`
+		// to the user ID and handle their audio packets separately.
+	}
+
+	fn voice_packet(&mut self, ssrc: u32, sequence: u16, _timestamp: u32, _stereo: bool, data: &[i16]) {
+		println!("Audio packet's first 5 bytes: {:?}", data.get(..5));
+		println!(
+			"Audio packet sequence {:05} has {:04} bytes, SSRC {}",
+			sequence,
+			data.len(),
+			ssrc,
+		);
+	}
+}
 
 pub struct VoiceHunt;
 
@@ -253,7 +280,7 @@ impl VHState {
 	}
 
 	fn update_channel(&mut self) {
-        println!("{:?}", self.population_counts);
+		println!("{:?}", self.population_counts);
 		if let Some(chan) = self.active_channel {
 			self.send(VoiceHuntMessage::Channel(chan));
 		} else if let Some(Incumbent(_, chan)) = self.incumbent_channel {
@@ -374,6 +401,9 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 					if manager.join(guild_id, chan).is_some() {
 						// test play
 						let mut handler = manager.get_mut(guild_id).unwrap();
+						// Testing voice receive---example 10.
+						// GOAL: ducking!
+						handler.listen(Some(Box::new(VoiceHuntReceiver::new())));
 
 						let source = ffmpeg(format!("bgm/{}",
 							if last_bgm_intro.elapsed() > next_bgm_intro {
