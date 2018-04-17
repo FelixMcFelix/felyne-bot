@@ -236,6 +236,8 @@ command!(cmd_leave(ctx, msg) {
 	};
 
 	voicehunt_control(&ctx, guild, VoiceHuntCommand::Carted);
+
+	check_msg(msg.channel_id.say("Mrr... :zzz:"));
 });
 
 command!(cmd_volume(ctx, msg, args) {

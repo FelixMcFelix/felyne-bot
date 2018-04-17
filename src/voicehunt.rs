@@ -32,13 +32,13 @@ impl AudioReceiver for VoiceHuntReceiver {
 	}
 
 	fn voice_packet(&mut self, ssrc: u32, sequence: u16, _timestamp: u32, _stereo: bool, data: &[i16]) {
-		println!("Audio packet's first 5 bytes: {:?}", data.get(..5));
-		println!(
-			"Audio packet sequence {:05} has {:04} bytes, SSRC {}",
-			sequence,
-			data.len(),
-			ssrc,
-		);
+		// println!("Audio packet's first 5 bytes: {:?}", data.get(..5));
+		// println!(
+		// 	"Audio packet sequence {:05} has {:04} bytes, SSRC {}",
+		// 	sequence,
+		// 	data.len(),
+		// 	ssrc,
+		// );
 	}
 }
 
@@ -292,17 +292,14 @@ impl VHState {
 }
 
 #[inline]
-fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, really_quit: bool) {
+fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId) {
 	let mut manager = manager_lock.lock();
 
-	let is_in_voicechat_here = match manager.get_mut(guild_id) {
-		Some(handler) => {handler.stop(); true}
-		None => false,
-	};
-
-	if really_quit && is_in_voicechat_here {
-		manager.remove(guild_id);
+	if let Some(handler) = manager.get_mut(guild_id) {
+		handler.stop();
 	}
+
+	manager.leave(guild_id);
 }
 
 fn random_element<'a, T, R: Rng>(arr: &'a[T], rng: &mut R) -> &'a T {
@@ -377,27 +374,23 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 	let mut curr_chan = None;
 
+	// {
+	// 	let mut manager = manager_lock.lock();
+	// 	println!("---\n{:?}", *manager);
+	// }
+
 	'escape: loop {
 		match rx.try_recv() {
 			Ok(VoiceHuntMessage::Channel(chan)) => {
-				let true_reconnect = match curr_chan {
-					Some(chan_old) => {
-						if chan_old != chan {
-							quit_vox_channel(manager_lock.clone(), guild_id, false);
-	
-							// Reset state!
-							curr_noice = None;
-							curr_bgm = None;
-							true
-						} else {false}
-					},
+				let new_join = match curr_chan {
+					Some(chan_old) => chan_old != chan,
 					None => true,
 				};
 
 				// Connect to a different vox channel.
 				let mut manager = manager_lock.lock();
 
-				if true_reconnect {
+				if new_join {
 					if manager.join(guild_id, chan).is_some() {
 						// test play
 						let mut handler = manager.get_mut(guild_id).unwrap();
@@ -434,12 +427,12 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				}
 			},
 			Ok(VoiceHuntMessage::NoChannel) => {
-				quit_vox_channel(manager_lock.clone(), guild_id, true);
+				quit_vox_channel(manager_lock.clone(), guild_id);
 				curr_chan = None;
 			},
 			Ok(VoiceHuntMessage::Cart) => {
 				if leaving {
-					quit_vox_channel(manager_lock.clone(), guild_id, true);
+					quit_vox_channel(manager_lock.clone(), guild_id);
 					break 'escape;
 				} else {
 					leaving = true;
@@ -616,7 +609,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				};
 
 				if leaving && outro_done {
-					quit_vox_channel(manager_lock.clone(), guild_id, true);
+					quit_vox_channel(manager_lock.clone(), guild_id);
 					break 'escape;
 				}
 
@@ -629,7 +622,8 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 	}
 	tx.send(VoiceHuntResponse::Done)
 		.expect(
-			format!("[VoiceHunt] Final Done send for {:?}'s handler failed.", guild_id).as_str());
+			format!("[VoiceHunt] Final Done send for {:?}'s handler failed.", guild_id).as_str()
+		);
 }
 
 pub fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntCommand) {
