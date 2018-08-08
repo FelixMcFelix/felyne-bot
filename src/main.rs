@@ -1,3 +1,4 @@
+extern crate env_logger;
 extern crate parking_lot;
 extern crate rand;
 #[macro_use] extern crate serenity;
@@ -100,6 +101,7 @@ fn help() {
 }
 
 fn main() {
+    env_logger::init();
 	// Check arg count -- do we have a file??
 	let args: Vec<_> = env::args().collect();
 

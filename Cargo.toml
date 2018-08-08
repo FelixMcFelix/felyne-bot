@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
 
 [dependencies]
+env_logger = "0.5"
 parking_lot = "^0.5"
 typemap = "0.3.3"
 rusqlite = "0.13.0"
@@ -11,7 +12,8 @@ rand = "^0.4"
 
 [dependencies.serenity]
 features = ["cache", "framework", "standard_framework", "voice", "utils"]
-#version = "0.5.2"
+version = "0.5.6"
 #path = "../serenity/"
-git = "https://github.com/FelixMcFelix/serenity.git"
-branch = "voice-stop-fixes"
+#git = "https://github.com/FelixMcFelix/serenity.git"
+#git = "https://github.com/serenity-rs/serenity.git"
+#branch = "feature/tungstenite-switch"
