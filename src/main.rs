@@ -92,7 +92,7 @@ impl EventHandler for FelyneEvts {
 	}
 
 	fn ready(&self, ctx: Context, _rdy: Ready) {
-		ctx.set_game(Game::listening("scary monsters!"));
+		ctx.set_activity(Activity::listening("scary monsters!"));
 	}
 }
 
@@ -272,12 +272,12 @@ command!(cmd_enumerate_voice_channels(_ctx, msg) {
 		},
 	};
 
-	let mut content = MessageBuilder::new()
-		.push_bold_line(format!("ChannelIDs for {}:", guild.get().unwrap().name));
+	let mut content = MessageBuilder::new();
+	content.push_bold_line(format!("ChannelIDs for {}:", guild));
 
 	for channel in guild.channels().unwrap().values() {
 		if channel.kind == ChannelType::Voice {
-			content = content.push(&channel.name)
+			content.push(&channel.name)
 				.push_bold(" --- ")
 				.push_line(&channel.id);
 		}
