@@ -1,13 +1,48 @@
 use dbs::*;
 use constants::*;
-
+use parking_lot::Mutex;
 use rand::random;
 use rusqlite::{Connection, Result as SQLResult};
 use serenity::client::*;
 use serenity::model::prelude::*;
 use serenity::utils::*;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    thread,
+};
 use typemap::Key;
+
+type Space = Arc<Mutex<Option<(String, Vec<u8>)>>>;
+
+#[derive(Clone)]
+pub struct AttachmentHolder {
+    store: Vec<Space>,
+}
+
+impl AttachmentHolder {
+	pub fn new(base_msg: &Message) -> Self {
+		// need to store a vec of mutexed option types
+		// need a thread for each attachment (threads can panic of whatever, have a timeout)
+		// thread replaces option contents on the inside of the mutex
+        let store = Vec::new();
+
+		return AttachmentHolder {
+            store
+        };
+	}
+}
+//			if let Some(message) = msg_full {
+//				for (i, a) in message.attachments.iter().enumerate() {
+//					match a.download() {
+//						Ok(val) => {
+//							let block = vec![(val.as_slice(), a.filename.as_str())];
+//							out_channel.send_files(block, |m| m.content(format!("Myah! {}: file {}!", msg, i)));
+//						},
+//						Err(e) => println!("Couldn't download attachment {}: {:?}", a.filename, e),
+//					}
+//				}
+//			}
 
 pub struct CircQueue<T> {
 	data: Box<[Option<T>]>,
@@ -66,6 +101,7 @@ fn wrap<T>(position: usize, increment: usize, buf: &[T]) -> usize {(position + i
 
 pub struct GuildDeleteData {
 	output_channel: Option<ChannelId>,
+	//backup: CircQueue<(Message,AttachmentHolder)>,
 	backup: CircQueue<Message>,
 }
 
