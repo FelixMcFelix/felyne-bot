@@ -10,10 +10,10 @@ mod watchcat;
 mod constants;
 mod voicehunt;
 
-use dbs::*;
-use watchcat::*;
-use constants::*;
-use voicehunt::*;
+use crate::dbs::*;
+use crate::watchcat::*;
+use crate::constants::*;
+use crate::voicehunt::*;
 
 use std::collections::HashMap;
 use std::env;

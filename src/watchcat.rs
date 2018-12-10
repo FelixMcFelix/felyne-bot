@@ -1,5 +1,5 @@
-use dbs::*;
-use constants::*;
+use crate::dbs::*;
+use crate::constants::*;
 use parking_lot::Mutex;
 use rand::random;
 use rusqlite::{Connection, Result as SQLResult};
@@ -8,41 +8,49 @@ use serenity::model::prelude::*;
 use serenity::utils::*;
 use std::{
     collections::HashMap,
+    mem,
     sync::Arc,
     thread,
 };
 use typemap::Key;
 
-type Space = Arc<Mutex<Option<(String, Vec<u8>)>>>;
+type Space = (String, Arc<Mutex<Option<Vec<u8>>>>);
 
 #[derive(Clone)]
 pub struct AttachmentHolder {
-    store: Vec<Space>,
+    pub store: Vec<Space>,
 }
 
 impl AttachmentHolder {
-	pub fn new(base_msg: &Message) -> Self {
+	pub fn new(attachments: &mut Vec<Attachment>) -> Self {
 		// need to store a vec of mutexed option types
 		// need a thread for each attachment (threads can panic of whatever, have a timeout)
 		// thread replaces option contents on the inside of the mutex
-        let store = Vec::new();
+        let mut store = Vec::new();
+
+		for a in attachments.drain(..) {
+            let obj = Arc::new(Mutex::new(None));
+            let inner_obj = obj.clone();
+            let name = a.filename.clone();
+
+            thread::spawn(move || {
+    			match a.download() {
+    				Ok(val) => {
+                        let mut store_space = inner_obj.lock();
+                        *store_space = Some(val);
+    				},
+    				Err(e) => println!("Couldn't download attachment {}: {:?}", a.filename, e),
+    			}
+            });
+
+            store.push((name, obj));
+		}
 
 		return AttachmentHolder {
             store
         };
 	}
 }
-//			if let Some(message) = msg_full {
-//				for (i, a) in message.attachments.iter().enumerate() {
-//					match a.download() {
-//						Ok(val) => {
-//							let block = vec![(val.as_slice(), a.filename.as_str())];
-//							out_channel.send_files(block, |m| m.content(format!("Myah! {}: file {}!", msg, i)));
-//						},
-//						Err(e) => println!("Couldn't download attachment {}: {:?}", a.filename, e),
-//					}
-//				}
-//			}
 
 pub struct CircQueue<T> {
 	data: Box<[Option<T>]>,
@@ -101,8 +109,8 @@ fn wrap<T>(position: usize, increment: usize, buf: &[T]) -> usize {(position + i
 
 pub struct GuildDeleteData {
 	output_channel: Option<ChannelId>,
-	//backup: CircQueue<(Message,AttachmentHolder)>,
-	backup: CircQueue<Message>,
+	backup: CircQueue<(Message, AttachmentHolder)>,
+	//backup: CircQueue<Message>,
 }
 
 impl GuildDeleteData {
@@ -141,7 +149,7 @@ pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 		top_dog.output_channel = Some(ChannelId(chan));
 	}
 
-	use WatchcatCommand::*;
+	use crate::WatchcatCommand::*;
 
 	match cmd {
 		SetChannel(chan) => {
@@ -154,8 +162,9 @@ pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 				report_delete(&top_dog, event_chan, msg);
 			}
 		},
-		BufferMsg(msg) => {
-			top_dog.backup.add_and_march(msg);	
+		BufferMsg(mut msg) => {
+            let attachments = AttachmentHolder::new(&mut msg.attachments);
+			top_dog.backup.add_and_march((msg, attachments));
 		},
 	}
 }
@@ -192,7 +201,7 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 				let s = msgs.get(curr);
 				match s {
 					&Some(ref message) => {
-						if message.id == msg {
+						if message.0.id == msg {
 							msg_full = Some(message);
 						}
 					},
@@ -207,11 +216,10 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 			let mut author_mention = String::from("Unknyown author");
 			let mut attachment_text = String::new();
 
-			if let Some(message) = msg_full {
-				let message = msg_full.unwrap();
+			if let Some((message, attachments_holder)) = msg_full {
 				content = message.content_safe();
 
-				attachment_text = match message.attachments.len() {
+				attachment_text = match attachments_holder.store.len() {
 					n if n <= 0 => String::new(),
 					n @ _ => format!("{} attachment{}! I'm digging them up---wait patiently, nya!", n, if n > 1 {"s"} else {""}),
 				};
@@ -254,13 +262,21 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 			}
 
 			if let Some(message) = msg_full {
-				for (i, a) in message.attachments.iter().enumerate() {
-					match a.download() {
-						Ok(val) => {
-							let block = vec![(val.as_slice(), a.filename.as_str())];
-							out_channel.send_files(block, |m| m.content(format!("Myah! {}: file {}!", msg, i)));
+				for (i, (name, locked_maybe_file)) in message.1.store.iter().enumerate() {
+                    let maybe_file = locked_maybe_file.lock();
+					match *maybe_file {
+						Some(ref val) => {
+							let block = vec![(val.as_slice(), name.as_str())];
+							out_channel.send_files(
+                                block, 
+                                |m| m.content(format!("File {}!", i))
+                            );
 						},
-						Err(e) => println!("Couldn't download attachment {}: {:?}", a.filename, e),
+						None => {
+                            out_channel.send_message(|m|
+                                m.content(format!("Couldn't recover file {}...", i))
+                            );
+                        },
 					}
 				}
 			}

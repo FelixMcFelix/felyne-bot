@@ -1,5 +1,5 @@
-use constants::*;
-use VoiceManager;
+use crate::constants::*;
+use crate::VoiceManager;
 
 use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
@@ -31,7 +31,7 @@ impl AudioReceiver for VoiceHuntReceiver {
 		// to the user ID and handle their audio packets separately.
 	}
 
-	fn voice_packet(&mut self, ssrc: u32, sequence: u16, _timestamp: u32, _stereo: bool, data: &[i16]) {
+	fn voice_packet(&mut self, _ssrc: u32, _sequence: u16, _timestamp: u32, _stereo: bool, _data: &[i16]) {
 		// println!("Audio packet's first 5 bytes: {:?}", data.get(..5));
 		// println!(
 		// 	"Audio packet sequence {:05} has {:04} bytes, SSRC {}",
@@ -110,7 +110,7 @@ impl VHState {
 
 	fn control(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, mode: VoiceHuntCommand) -> &mut Self {
 		// Note: we can read from the ShareMap because entrant code is guaranteed to have the lock.
-		use VoiceHuntCommand::*;
+		use crate::VoiceHuntCommand::*;
 
 		if let Carted = self.join_mode {
 			match mode {
