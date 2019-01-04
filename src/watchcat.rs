@@ -135,7 +135,7 @@ pub enum WatchcatCommand {
 }
 
 pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
-	let mut datas = ctx.data.lock();
+	let mut datas = ctx.data.write();
 	let top_dog = datas.get_mut::<DeleteWatchcat>()
 		.unwrap()
 		.entry(guild_id)
@@ -159,7 +159,7 @@ pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 		},
 		ReportDelete(event_chan, msgs) => {
 			for msg in msgs {
-				report_delete(&top_dog, event_chan, msg);
+				report_delete(&top_dog, event_chan, msg, ctx);
 			}
 		},
 		BufferMsg(mut msg) => {
@@ -186,7 +186,7 @@ fn upsert_watchcat(db: &Connection, guild_id: GuildId, channel_id: ChannelId) {
 	}
 }
 
-fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId) {
+fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId, ctx: &Context) {
 	match delete_data.output_channel {
 		Some(out_channel) => {
 			// Watchdog messages should be removable, if needed!
@@ -217,7 +217,7 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId)
 			let mut attachment_text = String::new();
 
 			if let Some((message, attachments_holder)) = msg_full {
-				content = message.content_safe();
+				content = message.content_safe(&ctx.cache);
 
 				attachment_text = match attachments_holder.store.len() {
 					n if n <= 0 => String::new(),

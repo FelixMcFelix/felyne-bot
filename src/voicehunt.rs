@@ -627,30 +627,30 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 }
 
 pub fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntCommand) {
-	let mut datas = ctx.data.lock();
+	let mut datas = ctx.data.write();
 	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id, CACHE.read().user.id))
+		.or_insert(VHState::new(guild_id, ctx.cache.read().user.id))
 		.control(voice_manager_lock, mode);
 }
 
 
 pub fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
-	let mut datas = ctx.data.lock();
+	let mut datas = ctx.data.write();
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id, CACHE.read().user.id))
+		.or_insert(VHState::new(guild_id, ctx.cache.read().user.id))
 		.register_user_state(&vox, true);
 }
 
 pub fn voicehunt_complete_update(ctx: &Context, guild_id: GuildId, voice_states: HashMap<UserId, VoiceState>) {
-	let mut datas = ctx.data.lock();
+	let mut datas = ctx.data.write();
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id, CACHE.read().user.id))
+		.or_insert(VHState::new(guild_id, ctx.cache.read().user.id))
 		.register_user_states(voice_states);
 }

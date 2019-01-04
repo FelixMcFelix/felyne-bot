@@ -43,8 +43,8 @@ impl EventHandler for FelyneEvts {
 		// Place the message in our "deleted messages cache".
 		// This should probably be the last action...
 		// Get the guild ID.
-		let guild_id = match CACHE.read().guild_channel(msg.channel_id) {
-			Some(c) => c.read().guild_id,
+		let guild_id = match msg.guild(&ctx.cache) {
+			Some(c) => c.read().id,
 			None => {
 				return;
 			},
@@ -56,9 +56,12 @@ impl EventHandler for FelyneEvts {
 
 	fn message_delete(&self, ctx: Context, chan: ChannelId, msg: MessageId) {
 		// Get the guild ID.
-		let guild_id = match CACHE.read().guild_channel(chan) {
-			Some(c) => c.read().guild_id,
-			None => {
+        let guild = chan.to_channel(&ctx)
+            .map(Channel::guild);
+
+		let guild_id = match guild {
+			Ok(Some(c)) => c.read().guild_id,
+			_ => {
 				return;
 			},
 		};
@@ -68,9 +71,12 @@ impl EventHandler for FelyneEvts {
 
 	fn message_delete_bulk(&self, ctx: Context, chan: ChannelId, msgs: Vec<MessageId>) {
 		// Get the guild ID.
-		let guild_id = match CACHE.read().guild_channel(chan) {
-			Some(c) => c.read().guild_id,
-			None => {
+        let guild = chan.to_channel(&ctx)
+            .map(Channel::guild);
+
+		let guild_id = match guild {
+			Ok(Some(c)) => c.read().guild_id,
+			_ => {
 				return;
 			},
 		};
@@ -147,7 +153,7 @@ fn main() {
 
 	// Okay, copy the client's voice manager into its data area so that commands can see it.
 	{
-		let mut data = client.data.lock();
+		let mut data = client.data.write();
 		data.insert::<VoiceManager>(Arc::clone(&client.voice_manager));
 		data.insert::<DeleteWatchcat>(HashMap::new());
 		data.insert::<VoiceHunt>(HashMap::new());
@@ -186,16 +192,16 @@ command!(cmd_log_to(ctx, msg, args) {
 	let out_chan = parse_chan_mention(&mut args);
 
 	if out_chan.is_none() {
-		return confused(msg);
+		return confused(&ctx, msg);
 	}
 
 	let out_chan = out_chan.unwrap();
 
 	// Get the guild ID.
-	let guild_id = match CACHE.read().guild_channel(out_chan) {
-		Some(c) => c.read().guild_id,
+	let guild_id = match msg.guild(&ctx.cache) {
+		Some(c) => c.read().id,
 		None => {
-			return confused(msg);
+			return confused(&ctx, msg);
 		},
 	};
 
@@ -206,10 +212,10 @@ command!(cmd_log_to(ctx, msg, args) {
 
 command!(cmd_join(ctx, msg, args) {
 	// Get the guild ID.
-	let guild = match CACHE.read().guild_channel(msg.channel_id) {
-		Some(c) => c.read().guild_id,
+	let guild = match msg.guild(&ctx.cache) {
+		Some(c) => c.read().id,
 		None => {
-			return confused(&msg);
+			return confused(&ctx, &msg);
 		},
 	};
 
@@ -230,10 +236,10 @@ command!(cmd_join(ctx, msg, args) {
 
 command!(cmd_leave(ctx, msg) {
 	// Get the guild ID.
-	let guild = match CACHE.read().guild_channel(msg.channel_id) {
-		Some(c) => c.read().guild_id,
+	let guild = match msg.guild(&ctx.cache) {
+		Some(c) => c.read().id,
 		None => {
-			return confused(&msg);
+			return confused(&ctx, &msg);
 		},
 	};
 
@@ -244,31 +250,31 @@ command!(cmd_leave(ctx, msg) {
 
 command!(cmd_volume(ctx, msg, args) {
 	// Get the guild ID.
-	let guild = match CACHE.read().guild_channel(msg.channel_id) {
-		Some(c) => c.read().guild_id,
+	let guild = match msg.guild(&ctx.cache) {
+		Some(c) => c.read().id,
 		None => {
-			return confused(&msg);
+			return confused(&ctx, &msg);
 		},
 	};
 
 	let vol = match args.single::<f32>().ok() {
 		Some(c) => c,
-		None => {return confused(&msg);},
+		None => {return confused(&ctx, &msg);},
 	};
 
 	if !vol.is_finite() || vol < 0.0 || vol > 2.0 {
-		return confused(&msg);	
+		return confused(&ctx, &msg);	
 	}
 
 	voicehunt_control(&ctx, guild, VoiceHuntCommand::Volume(vol));
 });
 
 
-command!(cmd_enumerate_voice_channels(_ctx, msg) {
-	let guild = match CACHE.read().guild_channel(msg.channel_id) {
-		Some(c) => c.read().guild_id,
+command!(cmd_enumerate_voice_channels(ctx, msg) {
+	let guild = match msg.guild(&ctx.cache) {
+		Some(c) => c.read().id,
 		None => {
-			return confused(&msg);
+			return confused(&ctx, &msg);
 		},
 	};
 
@@ -285,7 +291,7 @@ command!(cmd_enumerate_voice_channels(_ctx, msg) {
 
 	let out = content.build();
 
-	check_msg(msg.author.dm(|m| m.content(out)))
+	check_msg(msg.author.dm(&ctx, |m| m.content(out)))
 });
 
 command!(cmd_github(_ctx, msg) {
@@ -306,8 +312,8 @@ pub fn parse_chan_mention(args: &mut Args) -> Option<ChannelId> {
 // 	};
 // }
 
-pub fn confused(msg: &Message) -> Result<(), CommandError> {
-	check_msg(msg.reply("???"));
+pub fn confused(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
+	check_msg(msg.reply(&ctx, "???"));
 	Ok(())
 }
 
