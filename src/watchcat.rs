@@ -230,7 +230,7 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId,
 				author_img = author.face();
 			}
 			
-			match out_channel.send_message(|m| m
+			match out_channel.send_message(&ctx.http, |m| m
 				.embed(|e| {
 					let base = e.colour(Colour::from_rgb(236, 98, 0))
 					.author(|a| a
@@ -268,13 +268,15 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId,
 						Some(ref val) => {
 							let block = vec![(val.as_slice(), name.as_str())];
 							out_channel.send_files(
+                                &ctx.http,
                                 block, 
                                 |m| m.content(format!("File {}!", i))
                             );
 						},
 						None => {
-                            out_channel.send_message(|m|
-                                m.content(format!("Couldn't recover file {}...", i))
+                            out_channel.send_message(
+                                &ctx.http,
+                                |m| m.content(format!("Couldn't recover file {}...", i))
                             );
                         },
 					}

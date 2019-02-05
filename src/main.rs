@@ -207,7 +207,7 @@ command!(cmd_log_to(ctx, msg, args) {
 
 	watchcat(&ctx, guild_id, WatchcatCommand::SetChannel(out_chan));
 
-	check_msg(msg.channel_id.say("Mrowrorr! (I'll keep you nyotified!)"));
+	check_msg(msg.channel_id.say(&ctx.http, "Mrowrorr! (I'll keep you nyotified!)"));
 });
 
 command!(cmd_join(ctx, msg, args) {
@@ -231,7 +231,7 @@ command!(cmd_join(ctx, msg, args) {
 			None => {VoiceHuntCommand::BraveHunt},
 	});
 
-	check_msg(msg.channel_id.say("Mrowr!"));
+	check_msg(msg.channel_id.say(&ctx.http, "Mrowr!"));
 });
 
 command!(cmd_leave(ctx, msg) {
@@ -245,7 +245,7 @@ command!(cmd_leave(ctx, msg) {
 
 	voicehunt_control(&ctx, guild, VoiceHuntCommand::Carted);
 
-	check_msg(msg.channel_id.say("Mrr... :zzz:"));
+	check_msg(msg.channel_id.say(&ctx.http, "Mrr... :zzz:"));
 });
 
 command!(cmd_volume(ctx, msg, args) {
@@ -281,7 +281,7 @@ command!(cmd_enumerate_voice_channels(ctx, msg) {
 	let mut content = MessageBuilder::new();
 	content.push_bold_line(format!("ChannelIDs for {}:", guild));
 
-	for channel in guild.channels().unwrap().values() {
+	for channel in guild.channels(&ctx.http).unwrap().values() {
 		if channel.kind == ChannelType::Voice {
 			content.push(&channel.name)
 				.push_bold(" --- ")
@@ -294,9 +294,9 @@ command!(cmd_enumerate_voice_channels(ctx, msg) {
 	check_msg(msg.author.dm(&ctx, |m| m.content(out)))
 });
 
-command!(cmd_github(_ctx, msg) {
+command!(cmd_github(ctx, msg) {
 	// yeah whatever
-	check_msg(msg.channel_id.say("Mya! :heart: (https://github.com/FelixMcFelix/felyne-bot)"))
+	check_msg(msg.channel_id.say(&ctx.http, "Mya! :heart: (https://github.com/FelixMcFelix/felyne-bot)"))
 });
 
 pub fn parse_chan_mention(args: &mut Args) -> Option<ChannelId> {
