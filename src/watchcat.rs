@@ -162,7 +162,7 @@ pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 			}
 		},
 		BufferMsg(mut msg) => {
-			let attachments = AttachmentHolder::new(&mut *msg.attachments);
+			let attachments = AttachmentHolder::new(&mut msg.attachments);
 			top_dog.backup.add_and_march((msg, attachments));
 		},
 	}

@@ -619,7 +619,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 	}
 	tx.send(VoiceHuntResponse::Done)
 		.unwrap_or_else(|_|
-			panic!("[VoiceHunt] Final Done send for {:?}'s handler failed.", guild_id).as_str()
+			panic!("[VoiceHunt] Final Done send for {:?}'s handler failed.", guild_id)
 		);
 }
 

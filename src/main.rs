@@ -120,9 +120,9 @@ fn main() {
 	let mut token = String::new();
 
 	File::open(&args[1])
-		.unwrap_or_else(|_| panic!("Mraaw, mrow!?! (Grr! '{}' wasn't there?)", &args[1]).as_str())
+		.unwrap_or_else(|_| panic!("Mraaw, mrow!?! (Grr! '{}' wasn't there?)", &args[1]))
 		.read_to_string(&mut token)
-		.unwrap_or_else(|_| panic!("Nya!! (I can see '{}', but I can't read it!)", &args[1]).as_str());
+		.unwrap_or_else(|_| panic!("Nya!! (I can see '{}', but I can't read it!)", &args[1]));
 
 	let token_raw = token.as_str().trim();
 
