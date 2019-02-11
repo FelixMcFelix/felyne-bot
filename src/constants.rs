@@ -1,5 +1,5 @@
-pub const MANAGE_ROLES: &'static [&'static str] = &["certified cat wrangler"];
-pub const MONSTERS: &'static [&'static str] = &[
+pub const MANAGE_ROLES: &[&str] = &["certified cat wrangler"];
+pub const MONSTERS: &[&str] = &[
 	"Jaggi",
 	"Nargacuga",
 	"Barroth",
@@ -10,7 +10,7 @@ pub const MONSTERS: &'static [&'static str] = &[
 pub const BACKUP_SIZE: usize = 500;
 pub const VOICEHUNT_FRAME_TIME: u64 = 20;
 
-pub const SFX: &'static [&'static str] = &[
+pub const SFX: &[&str] = &[
 	"aggro1.opus",
 	"dig1.opus",
 	"dig-hit1.opus",
@@ -29,29 +29,29 @@ pub const SFX: &'static [&'static str] = &[
 	"wiggle1.opus",
 ];
 
-pub const BONUS_SFX: &'static [&'static str] = &[
+pub const BONUS_SFX: &[&str] = &[
 	"gargwa1.opus",
 	"gargwa2.opus",
 	"gargwa3.opus",
 ];
 
-pub const BONUSER_SFX: &'static str = "5796.wav";
+pub const BONUSER_SFX: &str = "5796.wav";
 
-pub const BONUSER_SFX_FOLLOW: &'static [&'static str] = &[
+pub const BONUSER_SFX_FOLLOW: &[&str] = &[
 	"5797.wav",
 	"5798.wav",
 ];
 
-pub const SLEEP: &'static str = "5799.wav";
+pub const SLEEP: &str = "5799.wav";
 
-pub const START: &'static [&'static str] = &[
+pub const START: &[&str] = &[
 	"5839.wav",
 	"5840.wav",
 	"5841.wav",
 	"5842.wav",
 ];
 
-pub const AMBIENCE: &'static [&'static str] = &[
+pub const AMBIENCE: &[&str] = &[
 	"5824.wav",
 	"5825.wav",
 	"5826.wav",
@@ -63,7 +63,7 @@ pub const AMBIENCE: &'static [&'static str] = &[
 	"5832.wav",
 ];
 
-pub const BGM: &'static [&'static str] = &[
+pub const BGM: &[&str] = &[
 	"5815.wav",
 	"5816.wav",
 	"5817.wav",

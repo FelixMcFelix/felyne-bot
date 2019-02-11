@@ -51,13 +51,13 @@ impl EventHandler for FelyneEvts {
 		};
 		
 		// println!("{:?}", msg);
-		watchcat(&ctx, guild_id, WatchcatCommand::BufferMsg(msg));
+		watchcat(&ctx, guild_id, WatchcatCommand::BufferMsg(Box::new(msg)));
 	}
 
 	fn message_delete(&self, ctx: Context, chan: ChannelId, msg: MessageId) {
 		// Get the guild ID.
-        let guild = chan.to_channel(&ctx)
-            .map(Channel::guild);
+		let guild = chan.to_channel(&ctx)
+			.map(Channel::guild);
 
 		let guild_id = match guild {
 			Ok(Some(c)) => c.read().guild_id,
@@ -71,8 +71,8 @@ impl EventHandler for FelyneEvts {
 
 	fn message_delete_bulk(&self, ctx: Context, chan: ChannelId, msgs: Vec<MessageId>) {
 		// Get the guild ID.
-        let guild = chan.to_channel(&ctx)
-            .map(Channel::guild);
+		let guild = chan.to_channel(&ctx)
+			.map(Channel::guild);
 
 		let guild_id = match guild {
 			Ok(Some(c)) => c.read().guild_id,
@@ -107,7 +107,7 @@ fn help() {
 }
 
 fn main() {
-    env_logger::init();
+	env_logger::init();
 	// Check arg count -- do we have a file??
 	let args: Vec<_> = env::args().collect();
 
@@ -120,9 +120,9 @@ fn main() {
 	let mut token = String::new();
 
 	File::open(&args[1])
-		.expect(format!("Mraaw, mrow!?! (Grr! '{}' wasn't there?)", &args[1]).as_str())
+		.unwrap_or_else(|_| panic!("Mraaw, mrow!?! (Grr! '{}' wasn't there?)", &args[1]).as_str())
 		.read_to_string(&mut token)
-		.expect(format!("Nya!! (I can see '{}', but I can't read it!)", &args[1]).as_str());
+		.unwrap_or_else(|_| panic!("Nya!! (I can see '{}', but I can't read it!)", &args[1]).as_str());
 
 	let token_raw = token.as_str().trim();
 
@@ -139,13 +139,10 @@ fn main() {
 	};
 
 	// Try and build tables, if we don't have them.
-	match init_db_tables(&db) {
-		Err(e) => {
-			println!("Nya nya nya?!?! (Couldn't setup db tables: {:?})", e);
-			return;
-		},
-		_ => {},
-	};
+	if let Err(e) = init_db_tables(&db) {
+		println!("Nya nya nya?!?! (Couldn't setup db tables: {:?})", e);
+		return;
+	}
 
 	// Establish the bot's config, register all our commands...
 	let mut client = Client::new(&token_raw, FelyneEvts {})

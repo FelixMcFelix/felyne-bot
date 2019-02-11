@@ -188,16 +188,13 @@ impl VHState {
 	}
 
 	fn send(&mut self, msg: VoiceHuntMessage) {
-		match self.huntsim_tx.as_ref() {
-			Some(lock_arc) => {
-				let lock = lock_arc.clone();
-				let tx = lock.lock();
+		if let Some(lock_arc) = self.huntsim_tx.as_ref() {
+			let lock = lock_arc.clone();
+			let tx = lock.lock();
 
-				if let Err(e) = tx.send(msg) {
-					println!("[VoiceHunt] Failed to send message: {:?}", e);
-				}
-			},
-			None => {},
+			if let Err(e) = tx.send(msg) {
+				println!("[VoiceHunt] Failed to send message: {:?}", e);
+			}
 		}
 	}
 
@@ -229,7 +226,7 @@ impl VHState {
 				let count = {
 					let v = self.population_counts.entry(channel).or_insert(1);
 					*v = *v.max(&mut 1) - 1;
-					v.clone()
+					*v
 				};
 
 				// If we lower the incumbent, we need to do a rescan.
@@ -241,7 +238,7 @@ impl VHState {
 			let count = {
 				let v = self.population_counts.entry(channel).or_insert(0);
 				*v += 1;
-				v.clone()
+				*v
 			};
 
 			self.update_incumbent(count, channel);
@@ -343,7 +340,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 	let noice_range = Range::new(600, 7_000);
 	let bonus_time_range = Range::new(20_000,60_000);
-	let bonuser_time_range = Range::new(600_000,1200_000);
+	let bonuser_time_range = Range::new(600_000,1_200_000);
 	let bgm_time_range = Range::new(300_000,600_000);
 
 	let mut curr_vol = vol;
@@ -393,7 +390,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				if new_join {
 					if manager.join(guild_id, chan).is_some() {
 						// test play
-						let mut handler = manager.get_mut(guild_id).unwrap();
+						let handler = manager.get_mut(guild_id).unwrap();
 						// Testing voice receive---example 10.
 						// GOAL: ducking!
 						handler.listen(Some(Box::new(VoiceHuntReceiver::new())));
@@ -453,7 +450,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 					let mut manager = manager_lock.lock();
 					
-					if let Some(mut handler) = manager.get_mut(guild_id){
+					if let Some(handler) = manager.get_mut(guild_id){
 						let source = ffmpeg(format!("sfx/{}", SLEEP)).unwrap();
 						
 						let safe_aud = handler.play_returning(source);
@@ -517,7 +514,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				if play_new || play_new_bgm {
 					let mut manager = manager_lock.lock();
 					
-					if let Some(mut handler) = manager.get_mut(guild_id){
+					if let Some(handler) = manager.get_mut(guild_id){
 						if play_new {
 							let sfx_name =
 								if let Some(aud_name) = force_next_aud {
@@ -621,8 +618,8 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 		}
 	}
 	tx.send(VoiceHuntResponse::Done)
-		.expect(
-			format!("[VoiceHunt] Final Done send for {:?}'s handler failed.", guild_id).as_str()
+		.unwrap_or_else(|_|
+			panic!("[VoiceHunt] Final Done send for {:?}'s handler failed.", guild_id).as_str()
 		);
 }
 
@@ -632,7 +629,7 @@ pub fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntComman
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id, ctx.cache.read().user.id))
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id))
 		.control(voice_manager_lock, mode);
 }
 
@@ -642,7 +639,7 @@ pub fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id, ctx.cache.read().user.id))
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id))
 		.register_user_state(&vox, true);
 }
 
@@ -651,6 +648,6 @@ pub fn voicehunt_complete_update(ctx: &Context, guild_id: GuildId, voice_states:
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert(VHState::new(guild_id, ctx.cache.read().user.id))
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id))
 		.register_user_states(voice_states);
 }
