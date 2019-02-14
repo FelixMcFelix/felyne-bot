@@ -1,34 +1,35 @@
-extern crate env_logger;
-extern crate parking_lot;
-extern crate rand;
-#[macro_use] extern crate serenity;
-extern crate typemap;
-extern crate rusqlite;
-
-mod dbs;
-mod watchcat;
+mod automata;
 mod constants;
+mod dbs;
 mod voicehunt;
+mod watchcat;
 
-use crate::dbs::*;
-use crate::watchcat::*;
-use crate::constants::*;
-use crate::voicehunt::*;
-
-use std::collections::HashMap;
-use std::env;
-use std::fs::File;
-use std::io::prelude::*;
-use std::sync::Arc;
+use crate::{
+	automata::*,
+	dbs::*,
+	watchcat::*,
+	constants::*,
+	voicehunt::*,
+};
+use serenity::{
+	client::{
+		*,
+		client::bridge::voice::ClientVoiceManager,
+	},
+	framework::standard::{Args, CommandError, StandardFramework},
+	model::prelude::*,
+	prelude::*,
+	Result as SResult,
+	utils::*,
+};
+use std::{
+	collections::HashMap,
+	env,
+	fs::File,
+	io::prelude::*,
+	sync::Arc,
+};
 use typemap::Key;
-
-use serenity::client::*;
-use serenity::client::bridge::voice::ClientVoiceManager;
-use serenity::framework::standard::{Args, CommandError, StandardFramework};
-use serenity::model::prelude::*;
-use serenity::prelude::*;
-use serenity::Result as SResult;
-use serenity::utils::*;
 
 struct VoiceManager;
 

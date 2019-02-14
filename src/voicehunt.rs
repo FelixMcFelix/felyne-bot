@@ -1,18 +1,35 @@
-use crate::constants::*;
-use crate::VoiceManager;
-
+use crate::{
+	automata::*,
+	constants::*,
+	VoiceManager,
+};
 use parking_lot::Mutex;
-use rand::{thread_rng, Rng};
-use rand::distributions::*;
-use serenity::client::*;
-use serenity::client::bridge::voice::ClientVoiceManager;
-use serenity::model::prelude::*;
-use serenity::voice::{ffmpeg, AudioReceiver, LockedAudio};
-use std::collections::hash_map::{HashMap, Entry};
-use std::sync::Arc;
-use std::sync::mpsc::{Sender, Receiver, channel, TryRecvError};
-use std::thread;
-use std::time::{Duration, Instant};
+use rand::{
+	distributions::*,
+	thread_rng,
+	Rng,
+};
+use serenity::{
+	client::{
+		*,
+		bridge::voice::ClientVoiceManager,
+	},
+	model::prelude::*,
+	voice::{
+		ffmpeg, AudioReceiver, LockedAudio,
+	},
+};
+use std::{
+	collections::hash_map::{HashMap, Entry},
+	sync::{
+		Arc,
+		sync::mpsc::{
+			Sender, Receiver, channel, TryRecvError,
+		},
+	},
+	thread,
+	time::{Duration, Instant,},
+};
 use typemap::Key;
 
 struct VoiceHuntReceiver;
