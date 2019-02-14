@@ -23,7 +23,7 @@ use std::{
 	collections::hash_map::{HashMap, Entry},
 	sync::{
 		Arc,
-		sync::mpsc::{
+		mpsc::{
 			Sender, Receiver, channel, TryRecvError,
 		},
 	},

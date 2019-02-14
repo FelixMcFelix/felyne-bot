@@ -14,8 +14,9 @@ use crate::{
 use serenity::{
 	client::{
 		*,
-		client::bridge::voice::ClientVoiceManager,
+		bridge::voice::ClientVoiceManager,
 	},
+    command,
 	framework::standard::{Args, CommandError, StandardFramework},
 	model::prelude::*,
 	prelude::*,
