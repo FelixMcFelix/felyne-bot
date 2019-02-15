@@ -1,4 +1,6 @@
-use rand::prelude::Distribution;
+use rand::{
+    distributions::*,
+};
 use std::{
 	cmp::Eq,
 	collections::HashMap,
@@ -9,23 +11,36 @@ use std::{
 	},
 };
 
-pub trait DurationSource {
-	fn draw(&self) -> Duration;
+#[derive(Clone, Debug)]
+pub enum DurationSource {
+    Exact(Duration),
+    Uniform(Uniform<Duration>),
 }
 
-impl DurationSource for Duration {
-	fn draw(&self) -> Self {
-		*self
-	}
+impl DurationSource {
+    pub fn draw(&self) -> Duration {
+        use DurationSource::*;
+
+        match self {
+            Exact(d) => *d,
+            Uniform(d) => d.sample(&mut rand::thread_rng()),
+        }
+    }
 }
 
-impl DurationSource for Distribution<Duration> {
-	fn draw(&self) -> Duration {
-		self.sample(rand::thread_rng())
-	}
+impl From<Duration> for DurationSource {
+    fn from(d: Duration) -> Self {
+        DurationSource::Exact(d)
+    }
 }
 
-#[derive(Copy, Clone, Debug)]
+impl From<Uniform<Duration>> for DurationSource {
+    fn from(d: Uniform<Duration>) -> Self {
+        DurationSource::Uniform(d)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Transition<State: Copy> {
 	destination: State,
 	priority: usize,
@@ -35,7 +50,7 @@ pub struct Transition<State: Copy> {
 	last_used: Instant,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Cooldown {
 	duration: DurationSource,
 	refresh: bool,
@@ -76,7 +91,7 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq> TimedMachine<State, Alphabet>
 		if let Some(mut tx) = tx {
 			tx.last_used = Instant::now();
 			tx.cooldown = tx.cooldown_data.as_ref()
-				.and_then(|cdd| cdd.draw());
+				.map(Cooldown::draw);
 
 			self.state = tx.destination;
 			Some(self.state)
@@ -106,7 +121,7 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq> TimedMachine<State, Alphabet>
 		let cooldown = cooldown_data.as_ref()
 			.and_then(|cd|
 				if cd.start_used {
-					cd.draw()
+					Some(cd.draw())
 				} else {
 					None
 				});
@@ -131,7 +146,7 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq> TimedMachine<State, Alphabet>
 		for (_start, token_map) in self.transitions.iter_mut() {
 			for (_token, tx_list) in token_map.iter_mut() {
 				for tx in tx_list.iter_mut() {
-					if let Some(cd) = tx.cooldown {
+					if let Some(cd) = &tx.cooldown_data {
 						if cd.refresh {
 							tx.cooldown = None;
 						}
@@ -197,7 +212,7 @@ mod test {
 	fn test_tx_cooldown() {
 		let mut machine = TimedMachine::new(TestState::A);
 		let cd = Cooldown {
-			duration: Duration::from_secs(200),
+			duration: Duration::from_secs(200).into(),
 			refresh: false,
 			start_used: false,
 		};
