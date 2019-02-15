@@ -8,8 +8,8 @@ edition = "2018"
 env_logger = "0.5"
 parking_lot = "0.6"
 typemap = "0.3"
-rusqlite = "0.13.0"
-rand = "0.4"
+rusqlite = "0.13"
+rand = "0.6"
 
 [dependencies.serenity]
 features = ["cache", "framework", "standard_framework", "voice", "utils"]

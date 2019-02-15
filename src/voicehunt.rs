@@ -317,7 +317,7 @@ fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: Guil
 }
 
 fn random_element<'a, T, R: Rng>(arr: &'a[T], rng: &mut R) -> &'a T {
-	&arr[Range::new(0, arr.len()).ind_sample(rng)]
+	&arr[Uniform::new(0, arr.len()).sample(rng)]
 }
 
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -351,14 +351,14 @@ enum SfxClass {
 fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, vol: f32) {
 	let timer = Duration::from_millis(VOICEHUNT_FRAME_TIME);
 	let mut rng = thread_rng();
-	let vol_range = Range::new(0.3,0.4);
-	let bgm_vol_range = Range::new(0.15,0.2);
+	let vol_range = Uniform::new(0.3,0.4);
+	let bgm_vol_range = Uniform::new(0.15,0.2);
 	let music_vol = 0.3;
 
-	let noice_range = Range::new(600, 7_000);
-	let bonus_time_range = Range::new(20_000,60_000);
-	let bonuser_time_range = Range::new(600_000,1_200_000);
-	let bgm_time_range = Range::new(300_000,600_000);
+	let noice_range = Uniform::new(600, 7_000);
+	let bonus_time_range = Uniform::new(20_000,60_000);
+	let bonuser_time_range = Uniform::new(600_000,1_200_000);
+	let bgm_time_range = Uniform::new(300_000,600_000);
 
 	let mut curr_vol = vol;
 
@@ -379,10 +379,10 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 	let mut last_bgm = Instant::now();
 
 	let mut next_noice = Duration::new(0, 0);
-	let mut next_noice_bonus = Duration::from_millis(bonus_time_range.ind_sample(&mut rng));
-	let mut next_bgm_bonuser = Duration::from_millis(bonuser_time_range.ind_sample(&mut rng));
+	let mut next_noice_bonus = Duration::from_millis(bonus_time_range.sample(&mut rng));
+	let mut next_bgm_bonuser = Duration::from_millis(bonuser_time_range.sample(&mut rng));
 	let mut next_bgm_intro = Duration::from_secs(0);
-	let mut next_bgm = Duration::from_millis(bgm_time_range.ind_sample(&mut rng));
+	let mut next_bgm = Duration::from_millis(bgm_time_range.sample(&mut rng));
 
 	let mut leaving = false;
 
@@ -542,12 +542,12 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 									aud_name
 								} else if last_noice_bonus.elapsed() > next_noice_bonus && !curr_bgm_class.no_gargwa() {
 									last_noice_bonus = Instant::now();
-									next_noice_bonus = Duration::from_millis(bonus_time_range.ind_sample(&mut rng));
+									next_noice_bonus = Duration::from_millis(bonus_time_range.sample(&mut rng));
 									curr_noice_class = SfxClass::Bonus;
 									random_element(BONUS_SFX, &mut rng)
 								} else if last_noice.elapsed() > next_noice {
 									last_noice = Instant::now();
-									next_noice = Duration::from_millis(noice_range.ind_sample(&mut rng));
+									next_noice = Duration::from_millis(noice_range.sample(&mut rng));
 									curr_noice_class = SfxClass::Cat;
 									random_element(SFX, &mut rng)
 								} else {
@@ -564,7 +564,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 									let aud_lock = safe_aud.clone();
 									let mut aud = aud_lock.lock();
 				
-									aud.volume(vol_range.ind_sample(&mut rng) * curr_vol);
+									aud.volume(vol_range.sample(&mut rng) * curr_vol);
 								}
 			
 								curr_noice = Some(safe_aud);
@@ -582,13 +582,13 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 									aud_name
 								} else if last_bgm_bonuser.elapsed() > next_bgm_bonuser {
 									last_bgm_bonuser = Instant::now();
-									next_bgm_bonuser = Duration::from_millis(bonuser_time_range.ind_sample(&mut rng));
+									next_bgm_bonuser = Duration::from_millis(bonuser_time_range.sample(&mut rng));
 									curr_bgm_class = BgmClass::Bonuser;
 									force_next_bgm = Some(&random_element(BONUSER_SFX_FOLLOW, &mut rng));
 									BONUSER_SFX
 								} else if last_bgm.elapsed() > next_bgm {
 									last_bgm = Instant::now();
-									next_bgm = Duration::from_millis(bgm_time_range.ind_sample(&mut rng));
+									next_bgm = Duration::from_millis(bgm_time_range.sample(&mut rng));
 									curr_bgm_class = BgmClass::Music;
 									random_element(BGM, &mut rng)
 								} else {
@@ -606,7 +606,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 									let aud_lock = safe_aud2.clone();
 									let mut aud = aud_lock.lock();
 				
-									aud.volume(if curr_bgm_class.no_gargwa() {music_vol} else {bgm_vol_range.ind_sample(&mut rng)} * curr_vol);
+									aud.volume(if curr_bgm_class.no_gargwa() {music_vol} else {bgm_vol_range.sample(&mut rng)} * curr_vol);
 								}
 			
 								curr_bgm = Some(safe_aud2);
