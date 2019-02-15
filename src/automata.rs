@@ -62,6 +62,14 @@ impl Cooldown {
 	pub fn draw(&self) -> Duration {
 		self.duration.draw()
 	}
+
+    pub fn new(duration: DurationSource, refresh: bool, start_used: bool) -> Self {
+        Self {
+            duration,
+            refresh,
+            start_used,
+        }
+    }
 }
 
 pub struct TimedMachine<State: Hash + Eq + Copy, Alphabet: Hash + Eq> {
@@ -189,6 +197,14 @@ mod test {
 	}
 
 	#[test]
+	fn test_tx_self() {
+		let mut machine = TimedMachine::new(TestState::A);
+		machine.add_transition(TestState::A, TestState::A, TestAlpha::A);
+
+		assert_eq!(machine.advance(TestAlpha::A), Some(TestState::A));
+	}
+
+	#[test]
 	fn test_tx_multi() {
 		let mut machine = TimedMachine::new(TestState::A);
 		machine.add_transition(TestState::A, TestState::A, TestAlpha::A)
@@ -211,11 +227,24 @@ mod test {
 	#[test]
 	fn test_tx_cooldown() {
 		let mut machine = TimedMachine::new(TestState::A);
-		let cd = Cooldown {
-			duration: Duration::from_secs(200).into(),
-			refresh: false,
-			start_used: false,
-		};
+		let cd = Cooldown::new(Duration::from_secs(200).into(), false, false);
+
+		machine.add_transition(TestState::A, TestState::B, TestAlpha::A)
+			.add_priority_transition(TestState::A, TestState::C, TestAlpha::A, 1, Some(cd))
+			.add_transition(TestState::C, TestState::A, TestAlpha::A);
+
+		machine.advance(TestAlpha::A);
+		machine.advance(TestAlpha::A);
+		assert_eq!(machine.advance(TestAlpha::A), Some(TestState::B));
+	}
+
+	#[test]
+	fn test_tx_prob_cooldown() {
+		let mut machine = TimedMachine::new(TestState::A);
+		let cd = Cooldown::new(
+            Uniform::new(Duration::from_secs(100),Duration::from_secs(200)).into(),
+            false,
+            false);
 
 		machine.add_transition(TestState::A, TestState::B, TestAlpha::A)
 			.add_priority_transition(TestState::A, TestState::C, TestAlpha::A, 1, Some(cd))
