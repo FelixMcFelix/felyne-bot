@@ -5,7 +5,6 @@ mod voicehunt;
 mod watchcat;
 
 use crate::{
-	automata::*,
 	dbs::*,
 	watchcat::*,
 	constants::*,

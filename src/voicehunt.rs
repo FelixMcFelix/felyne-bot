@@ -28,7 +28,7 @@ use std::{
         },
     },
     thread,
-    time::{Duration, Instant,},
+    time::Duration,
 };
 use typemap::Key;
 
@@ -362,7 +362,6 @@ enum SfxInput {
 }
 
 fn play_bgm(
-        guild_id: GuildId,
         state: BgmClass,
         vox: &mut Handler,
         rng: &mut impl Rng
@@ -385,7 +384,6 @@ fn play_bgm(
 }
 
 fn play_sfx(
-        guild_id: GuildId,
         state: SfxClass,
         vox: &mut Handler,
         rng: &mut impl Rng
@@ -523,7 +521,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
                                 .expect("Should have reached Ambience...")
                         };
 
-                        curr_bgm = play_bgm(guild_id, state, &mut handler, &mut rng)
+                        curr_bgm = play_bgm(state, &mut handler, &mut rng)
                             .map(|aud_lock| {
                                 {
                                     let mut aud = aud_lock.lock();
@@ -573,7 +571,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
                         let state = bgm_machine.advance(BgmInput::MoveOutro)
                             .expect("Can always use outro...");
 
-                        curr_bgm = play_bgm(guild_id, state, &mut handler, &mut rng)
+                        curr_bgm = play_bgm(state, &mut handler, &mut rng)
                             .map(|aud_lock| {
                                 {
                                     let mut aud = aud_lock.lock();
@@ -614,7 +612,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
                     if aud.finished && sfx_machine.state() != SfxClass::NoSfx {
                         // return to NoSfx...
-                        let s = sfx_machine.advance(SfxInput::Advance);
+                        sfx_machine.advance(SfxInput::Advance);
                     }
 
                     aud.finished
@@ -633,7 +631,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
                     if let Some(mut handler) = manager.get_mut(guild_id){
                         if play_new {
                             if let Some(state) = sfx_machine.advance(SfxInput::Advance) {
-                                curr_sfx = play_sfx(guild_id, state, &mut handler, &mut rng)
+                                curr_sfx = play_sfx(state, &mut handler, &mut rng)
                                     .map(|aud_lock| {
                                         {
                                             let mut aud = aud_lock.lock();
@@ -648,7 +646,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
                         if play_new_bgm {
                             if let Some(state) = bgm_machine.advance(BgmInput::Advance) {
-                                curr_bgm = play_bgm(guild_id, state, &mut handler, &mut rng)
+                                curr_bgm = play_bgm(state, &mut handler, &mut rng)
                                     .map(|aud_lock| {
                                         {
                                             let mut aud = aud_lock.lock();

@@ -132,14 +132,14 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
     }
 
     pub fn register_state(&mut self, state: State) -> &mut Self {
-        let alpha_set = self.transitions
+        self.transitions
             .entry(state)
-            .or_insert(HashMap::new());
+            .or_insert_with(HashMap::new);
         self
     }
 
     pub fn all_transition(&mut self, to: State, on: Alphabet) -> &mut Self {
-        let starts: Vec<State> = self.transitions.keys().map(|x| *x).collect();
+        let starts: Vec<State> = self.transitions.keys().cloned().collect();
         for start in starts {
             self.add_transition(start, to, on);
         }
@@ -157,10 +157,10 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
             ) -> &mut Self {
         let alpha_set = self.transitions
             .entry(from)
-            .or_insert(HashMap::new());
+            .or_insert_with(HashMap::new);
         let tx_list = alpha_set
             .entry(on)
-            .or_insert(Vec::new());
+            .or_insert_with(Vec::new);
 
         // existing transitions with same priority are overridden.
         let pos = tx_list.binary_search_by_key(&priority, |el| el.priority);
