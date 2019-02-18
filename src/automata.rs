@@ -1,5 +1,5 @@
 use rand::{
-    distributions::*,
+	distributions::*,
 };
 use std::{
 	cmp::Eq,
@@ -13,31 +13,31 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub enum DurationSource {
-    Exact(Duration),
-    Uniform(Uniform<Duration>),
+	Exact(Duration),
+	Uniform(Uniform<Duration>),
 }
 
 impl DurationSource {
-    pub fn draw(&self) -> Duration {
-        use DurationSource::*;
+	pub fn draw(&self) -> Duration {
+		use DurationSource::*;
 
-        match self {
-            Exact(d) => *d,
-            Uniform(d) => d.sample(&mut rand::thread_rng()),
-        }
-    }
+		match self {
+			Exact(d) => *d,
+			Uniform(d) => d.sample(&mut rand::thread_rng()),
+		}
+	}
 }
 
 impl From<Duration> for DurationSource {
-    fn from(d: Duration) -> Self {
-        DurationSource::Exact(d)
-    }
+	fn from(d: Duration) -> Self {
+		DurationSource::Exact(d)
+	}
 }
 
 impl From<Uniform<Duration>> for DurationSource {
-    fn from(d: Uniform<Duration>) -> Self {
-        DurationSource::Uniform(d)
-    }
+	fn from(d: Uniform<Duration>) -> Self {
+		DurationSource::Uniform(d)
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -48,6 +48,15 @@ pub struct Transition<State: Copy> {
 	cooldown_data: Option<Cooldown>,
 	cooldown: Option<Duration>,
 	last_used: Instant,
+}
+
+impl<State: Copy> Transition<State> {
+	fn cooldown(&mut self, data: Option<Cooldown>) {
+		self.last_used = Instant::now();
+		self.cooldown = data.as_ref()
+			.or_else(|_| self.cooldown_data.as_ref())
+			.map(Cooldown::draw);
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -63,13 +72,15 @@ impl Cooldown {
 		self.duration.draw()
 	}
 
-    pub fn new(duration: DurationSource, refresh: bool, start_used: bool) -> Self {
-        Self {
-            duration,
-            refresh,
-            start_used,
-        }
-    }
+	pub fn new(duration: DurationSource, refresh: bool, start_used: bool) -> Self {
+		Self {
+			duration,
+			refresh,
+			start_used,
+		}
+	}
+
+	fn cooldown()
 }
 
 pub struct TimedMachine<State: Hash + Eq + Copy, Alphabet: Hash + Eq> {
@@ -97,9 +108,7 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 			);
 
 		if let Some(mut tx) = tx {
-			tx.last_used = Instant::now();
-			tx.cooldown = tx.cooldown_data.as_ref()
-				.map(Cooldown::draw);
+			tx.cooldown()
 
 			self.state = tx.destination;
 			Some(self.state)
@@ -108,20 +117,31 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 		}
 	}
 
-    pub fn register_state(&mut self, state: State) -> &mut Self {
+	pub fn cause_cooldown(&mut self, from: State, to: State, on: Alphabet, prio: usize, data: Option<Cooldown>) {
+		let tx = self.transitions.get_mut(&from)
+			.and_then(move |token_map| token_map.get_mut(&on))
+			.and_then(|tx_list|
+				tx_list.iter_mut()
+					.for_each(|tx| if tx.priority == prio && tx.destination == to {
+						tx.cooldown(data);
+					})
+			);
+	}
+
+	pub fn register_state(&mut self, state: State) -> &mut Self {
 		let alpha_set = self.transitions
 			.entry(state)
 			.or_insert(HashMap::new());
-        self
-    }
+		self
+	}
 
-    pub fn all_transition(&mut self, to: State, on: Alphabet) -> &mut Self {
+	pub fn all_transition(&mut self, to: State, on: Alphabet) -> &mut Self {
 		let starts: Vec<State> = self.transitions.keys().map(|x| *x).collect();
 		for start in starts {
-            self.add_transition(start, to, on);
-        }
-        self
-    }
+			self.add_transition(start, to, on);
+		}
+		self
+	}
 
 	pub fn add_transition(&mut self, from: State, to: State, on: Alphabet) -> &mut Self {
 		self.add_priority_transition(from, to, on, 0, None)
@@ -129,7 +149,7 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 
 	pub fn add_priority_transition(
 			&mut self,
-			from: State, to: State, on: Alphabet, 
+			from: State, to: State, on: Alphabet,
 			priority: usize, cooldown_data: Option<Cooldown>
 			) -> &mut Self {
 		let alpha_set = self.transitions
@@ -180,9 +200,9 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 		self
 	}
 
-    pub fn state(&self) -> State {
-        self.state
-    }
+	pub fn state(&self) -> State {
+		self.state
+	}
 }
 
 #[cfg(test)]
@@ -261,9 +281,9 @@ mod test {
 	fn test_tx_prob_cooldown() {
 		let mut machine = TimedMachine::new(TestState::A);
 		let cd = Cooldown::new(
-            Uniform::new(Duration::from_secs(100),Duration::from_secs(200)).into(),
-            false,
-            false);
+			Uniform::new(Duration::from_secs(100),Duration::from_secs(200)).into(),
+			false,
+			false);
 
 		machine.add_transition(TestState::A, TestState::B, TestAlpha::A)
 			.add_priority_transition(TestState::A, TestState::C, TestAlpha::A, 1, Some(cd))
