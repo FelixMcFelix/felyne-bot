@@ -16,7 +16,7 @@ use serenity::{
 	},
 	model::prelude::*,
 	voice::{
-		ffmpeg, AudioReceiver, LockedAudio,
+		ffmpeg, AudioReceiver, Handler, LockedAudio,
 	},
 };
 use std::{
@@ -316,36 +316,68 @@ fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: Guil
 	manager.leave(guild_id);
 }
 
+#[inline]
 fn random_element<'a, T, R: Rng>(arr: &'a[T], rng: &mut R) -> &'a T {
 	&arr[Uniform::new(0, arr.len()).sample(rng)]
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 enum BgmClass {
 	NoBgm,
 	Intro,
 	Ambience,
 	Music,
-	Bonuser,
-	Force,
+	Bonus,
+	BonusResult,
+    Outro,
 }
 
 impl BgmClass {
 	fn no_gargwa(self) -> bool {
-		use self::BgmClass::*;
+		use BgmClass::*;
 
 		self == Music ||
-		self == Bonuser ||
-		self == Force
+		self == Bonus ||
+		self == BonusResult
 	}
 }
 
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
+enum BgmInput {
+	TryIntro,
+	Advance,
+    MoveOutro,
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone, Hash)]
 enum SfxClass {
 	NoSfx,
 	Cat,
 	Bonus,
 	Force,
+}
+
+fn play_bgm(
+        guild_id: GuildId,
+        state: BgmClass,
+        vox: &mut Handler,
+        rng: &mut impl Rng
+    ) -> Option<LockedAudio> {
+    use BgmClass::*;
+
+    let el_list = match state {
+        NoBgm => { return None; },
+        Intro => START,
+        Ambience => AMBIENCE,
+        Music => BGM,
+        Bonus => BBQ,
+        BonusResult => BBQ_RESULT,
+        Outro => SLEEP,
+    };
+
+    ffmpeg(format!("bgm/{}", random_element(el_list, rng)))
+        .map(|source| vox.play_returning(source))
+        .ok()
 }
 
 fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, vol: f32) {
@@ -357,36 +389,64 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 	let noice_range = Uniform::new(600, 7_000);
 	let bonus_time_range = Uniform::new(20_000,60_000);
-	let bonuser_time_range = Uniform::new(600_000,1_200_000);
-	let bgm_time_range = Uniform::new(300_000,600_000);
 
 	let mut curr_vol = vol;
 
 	let mut curr_noice: Option<LockedAudio> = None;
 	let mut curr_bgm: Option<LockedAudio> = None;
-	let mut outro: Option<LockedAudio> = None;
 
 	let mut curr_noice_class = SfxClass::NoSfx;
-	let mut curr_bgm_class = BgmClass::NoBgm;
 
 	let mut force_next_aud: Option<&str> = None;
-	let mut force_next_bgm: Option<&str> = None;
 
 	let mut last_noice = Instant::now();
 	let mut last_noice_bonus = Instant::now();
-	let mut last_bgm_bonuser = Instant::now();
-	let mut last_bgm_intro = Instant::now();
-	let mut last_bgm = Instant::now();
 
 	let mut next_noice = Duration::new(0, 0);
 	let mut next_noice_bonus = Duration::from_millis(bonus_time_range.sample(&mut rng));
-	let mut next_bgm_bonuser = Duration::from_millis(bonuser_time_range.sample(&mut rng));
-	let mut next_bgm_intro = Duration::from_secs(0);
-	let mut next_bgm = Duration::from_millis(bgm_time_range.sample(&mut rng));
 
 	let mut leaving = false;
 
 	let mut curr_chan = None;
+
+    let mut bgm_machine = TimedMachine::new(BgmClass::NoBgm);
+    {
+        use BgmClass::*;
+        use BgmInput::*;
+        bgm_machine
+            // Intro (only once per few runs ideally).
+            .add_priority_transition(
+			    NoBgm, Intro, TryIntro, 0,
+			    Some(Cooldown::new(Duration::from_secs(300).into(), false, false))
+                )
+            .add_transition(Intro, Ambience, Advance)
+            .add_transition(NoBgm, Ambience, Advance)
+            // Main ambience/bgm/bonus loop.
+            // Self.
+            .add_transition(Ambience, Ambience, Advance)
+
+            // In/out BGM.
+            .add_priority_transition(
+			    Ambience, Music, Advance, 1,
+			    Some(Cooldown::new(
+                    Uniform::new(Duration::from_secs(300), Duration::from_secs(600)).into(),
+                    true,
+                    true,
+                )))
+            .add_transition(Music, Ambience, Advance)
+
+            // Poogie + Result + Out.
+            .add_priority_transition(
+			    Ambience, Bonus, Advance, 2,
+			    Some(Cooldown::new(
+                    Uniform::new(Duration::from_secs(600), Duration::from_secs(1200)).into(),
+                    true,
+                    true,
+                )))
+            .add_transition(Bonus, BonusResult, Advance)
+            .add_transition(BonusResult, Ambience, Advance)
+            .all_transition(Outro, MoveOutro);
+    }
 
 	// {
 	// 	let mut manager = manager_lock.lock();
@@ -405,35 +465,32 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				let mut manager = manager_lock.lock();
 
 				if new_join {
+                    bgm_machine.refresh();
+
 					if manager.join(guild_id, chan).is_some() {
 						// test play
-						let handler = manager.get_mut(guild_id).unwrap();
+						let mut handler = manager.get_mut(guild_id).unwrap();
 						// Testing voice receive---example 10.
 						// GOAL: ducking!
 						handler.listen(Some(Box::new(VoiceHuntReceiver::new())));
 
-						let source = ffmpeg(format!("bgm/{}",
-							if last_bgm_intro.elapsed() > next_bgm_intro {
-								last_bgm_intro = Instant::now();
-								next_noice = Duration::from_secs(13);
-								next_bgm_intro = Duration::from_secs(300);
-								curr_bgm_class = BgmClass::Intro;
-								random_element(START, &mut rng)
-							} else {
-								curr_bgm_class = BgmClass::Ambience;
-								random_element(AMBIENCE, &mut rng)
-							})).unwrap();
+                        let state = if let Some(s) = bgm_machine.advance(BgmInput::TryIntro){
+							next_noice = Duration::from_secs(13);
+                            s
+                        } else {
+                            bgm_machine.advance(BgmInput::Advance)
+                                .expect("Should have reached Ambience...")
+                        };
 
-						let safe_aud = handler.play_returning(source);
+                        curr_bgm = play_bgm(guild_id, state, &mut handler, &mut rng)
+                            .map(|aud_lock| {
+                                {
+                                    let mut aud = aud_lock.lock();
+                                    aud.volume(1.0 * curr_vol);
+                                }
+                                aud_lock
+                            });
 
-						{
-							let aud_lock = safe_aud.clone();
-							let mut aud = aud_lock.lock();
-
-							aud.volume(1.0 * curr_vol);
-						}
-
-						curr_bgm = Some(safe_aud);
 						curr_chan = Some(chan);
 					} else {
 						println!("Failed to connect to {:?}!", chan);
@@ -467,19 +524,19 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 					let mut manager = manager_lock.lock();
 					
-					if let Some(handler) = manager.get_mut(guild_id){
-						let source = ffmpeg(format!("sfx/{}", SLEEP)).unwrap();
-						
-						let safe_aud = handler.play_returning(source);
-		
-						{
-							let aud_lock = safe_aud.clone();
-							let mut aud = aud_lock.lock();
-		
-							aud.volume(0.6 * curr_vol);
-						}
-	
-						outro = Some(safe_aud);
+					if let Some(mut handler) = manager.get_mut(guild_id){
+                        let state = bgm_machine.advance(BgmInput::MoveOutro)
+                            .expect("Can always use outro...");
+
+                        curr_bgm = play_bgm(guild_id, state, &mut handler, &mut rng)
+                            .map(|aud_lock| {
+                                {
+                                    let mut aud = aud_lock.lock();
+
+								    aud.volume(0.6* curr_vol);
+                                }
+                                aud_lock
+                            });
 					}
 				}
 			},
@@ -506,7 +563,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				// If we receieved nothing, then we can perform an update.
 				// Iteration, then wait.
 
-				let play_new = curr_bgm_class != BgmClass::Bonuser && (curr_noice.is_none() || {
+				let play_new = bgm_machine.state() != BgmClass::Bonus && (curr_noice.is_none() || {
 					let lock = curr_noice.as_ref().expect("wtf").clone();
 					let aud = lock.lock();
 
@@ -521,17 +578,13 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 					let lock = curr_bgm.as_ref().expect("wtf").clone();
 					let aud = lock.lock();
 
-					if aud.finished {
-						curr_bgm_class = BgmClass::NoBgm;
-					}
-
 					aud.finished
 				};
 
 				if play_new || play_new_bgm {
 					let mut manager = manager_lock.lock();
 					
-					if let Some(handler) = manager.get_mut(guild_id){
+					if let Some(mut handler) = manager.get_mut(guild_id){
 						if play_new {
 							let sfx_name =
 								if let Some(aud_name) = force_next_aud {
@@ -540,7 +593,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 									next_noice = Duration::from_millis(0);
 									curr_noice_class = SfxClass::Force;
 									aud_name
-								} else if last_noice_bonus.elapsed() > next_noice_bonus && !curr_bgm_class.no_gargwa() {
+								} else if last_noice_bonus.elapsed() > next_noice_bonus && !bgm_machine.state().no_gargwa() {
 									last_noice_bonus = Instant::now();
 									next_noice_bonus = Duration::from_millis(bonus_time_range.sample(&mut rng));
 									curr_noice_class = SfxClass::Bonus;
@@ -572,55 +625,27 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 						}
 
 						if play_new_bgm {
+                            if let Some(state) = bgm_machine.advance(BgmInput::Advance) {
+                                curr_bgm = play_bgm(guild_id, state, &mut handler, &mut rng)
+                                    .map(|aud_lock| {
+                                        {
+                                            let mut aud = aud_lock.lock();
+                                            let vol = if state.no_gargwa() {
+                                                music_vol
+                                            } else {
+                                                bgm_vol_range.sample(&mut rng)
+                                            } * curr_vol;
 
-							let bgm_name =
-								if let Some(aud_name) = force_next_bgm {
-									force_next_bgm = None;
-									last_bgm = Instant::now();
-									next_bgm = Duration::from_millis(0);
-									curr_bgm_class = BgmClass::Force;
-									aud_name
-								} else if last_bgm_bonuser.elapsed() > next_bgm_bonuser {
-									last_bgm_bonuser = Instant::now();
-									next_bgm_bonuser = Duration::from_millis(bonuser_time_range.sample(&mut rng));
-									curr_bgm_class = BgmClass::Bonuser;
-									force_next_bgm = Some(&random_element(BONUSER_SFX_FOLLOW, &mut rng));
-									BONUSER_SFX
-								} else if last_bgm.elapsed() > next_bgm {
-									last_bgm = Instant::now();
-									next_bgm = Duration::from_millis(bgm_time_range.sample(&mut rng));
-									curr_bgm_class = BgmClass::Music;
-									random_element(BGM, &mut rng)
-								} else {
-									curr_bgm_class = BgmClass::Ambience;
-									random_element(AMBIENCE, &mut rng)
-								};
-
-							if !bgm_name.is_empty(){
-
-								let source2 = ffmpeg(format!("bgm/{}", bgm_name)).unwrap();
-
-								let safe_aud2 = handler.play_returning(source2);
-				
-								{
-									let aud_lock = safe_aud2.clone();
-									let mut aud = aud_lock.lock();
-				
-									aud.volume(if curr_bgm_class.no_gargwa() {music_vol} else {bgm_vol_range.sample(&mut rng)} * curr_vol);
-								}
-			
-								curr_bgm = Some(safe_aud2);
-							}
+									        aud.volume(vol);
+                                        }
+                                        aud_lock
+                                    });
+                            }
 						}
 					}
 				}
 
-				let outro_done = outro.is_some() && {
-					let lock = outro.as_ref().expect("wtf").clone();
-					let aud = lock.lock();
-
-					aud.finished
-				};
+				let outro_done = bgm_machine.state() == BgmClass::Outro && play_new_bgm;
 
 				if leaving && outro_done {
 					quit_vox_channel(manager_lock.clone(), guild_id);

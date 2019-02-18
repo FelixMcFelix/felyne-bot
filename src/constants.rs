@@ -35,14 +35,14 @@ pub const BONUS_SFX: &[&str] = &[
 	"gargwa3.opus",
 ];
 
-pub const BONUSER_SFX: &str = "5796.wav";
+pub const BBQ: &[&str] = &["5796.wav"];
 
-pub const BONUSER_SFX_FOLLOW: &[&str] = &[
+pub const BBQ_RESULT: &[&str] = &[
 	"5797.wav",
 	"5798.wav",
 ];
 
-pub const SLEEP: &str = "5799.wav";
+pub const SLEEP: &[&str] = &["5799.wav"];
 
 pub const START: &[&str] = &[
 	"5839.wav",

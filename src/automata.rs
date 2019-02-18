@@ -77,7 +77,7 @@ pub struct TimedMachine<State: Hash + Eq + Copy, Alphabet: Hash + Eq> {
 	transitions: HashMap<State, HashMap<Alphabet, Vec<Transition<State>>>>,
 }
 
-impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq> TimedMachine<State, Alphabet> {
+impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Alphabet> {
 	pub fn new(start: State) -> Self {
 		Self {
 			state: start,
@@ -107,6 +107,21 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq> TimedMachine<State, Alphabet>
 			None
 		}
 	}
+
+    pub fn register_state(&mut self, state: State) -> &mut Self {
+		let alpha_set = self.transitions
+			.entry(state)
+			.or_insert(HashMap::new());
+        self
+    }
+
+    pub fn all_transition(&mut self, to: State, on: Alphabet) -> &mut Self {
+		let starts: Vec<State> = self.transitions.keys().map(|x| *x).collect();
+		for start in starts {
+            self.add_transition(start, to, on);
+        }
+        self
+    }
 
 	pub fn add_transition(&mut self, from: State, to: State, on: Alphabet) -> &mut Self {
 		self.add_priority_transition(from, to, on, 0, None)
@@ -164,6 +179,10 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq> TimedMachine<State, Alphabet>
 		}
 		self
 	}
+
+    pub fn state(&self) -> State {
+        self.state
+    }
 }
 
 #[cfg(test)]
