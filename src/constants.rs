@@ -70,3 +70,7 @@ pub const BGM: &[&str] = &[
 	"6383.wav",
 	"6384.wav",
 ];
+
+
+pub const TRACE_DIR: &str =
+	"traces/";
