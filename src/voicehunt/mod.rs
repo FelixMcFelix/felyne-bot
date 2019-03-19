@@ -32,7 +32,10 @@ use std::{
 		},
 	},
 	thread,
-	time::Duration,
+	time::{
+		Duration,
+		Instant
+	},
 };
 use typemap::Key;
 
@@ -46,13 +49,16 @@ impl Key for VoiceHunt {
 pub enum VoiceHuntCommand {
 	Carted,
 	BraveHunt,
+	Stalk,
 	DirectedHunt(ChannelId),
 	Volume(f32),
 }
 
 #[derive(Debug)]
 enum VoiceHuntMessage {
-	Channel(ChannelId),
+	Channel(ChannelId, bool),
+	Stealth,
+	Unstealth,
 	NoChannel,
 	Volume(f32),
 	Cart,
@@ -85,6 +91,8 @@ pub struct VHState {
 
 impl VHState {
 	fn new(guild_id: GuildId, user_id: UserId) -> Self {
+		// NOTE: will need some further changes if I want to start
+		// in the Stalk or BraveHunt states...
 		VHState {
 			guild_id,
 			user_id,
@@ -118,10 +126,12 @@ impl VHState {
 					let guild_id = self.guild_id;
 					let vol = self.volume;
 
+					let self_tx = sender.clone();
+
 					// Begin!
 					thread::spawn(move || {
 						// Init state here
-						felyne_life(receiver, reverse_sender, vox_manager, guild_id, vol);
+						felyne_life(receiver, reverse_sender, vox_manager, guild_id, vol, self_tx);
 					});
 
 					self.huntsim_tx = Some(Arc::new(Mutex::new(sender)));
@@ -161,12 +171,22 @@ impl VHState {
 				// Force new state.
 				self.active_channel = Some(chan);
 				self.join_mode = mode;
+				self.send(VoiceHuntMessage::Unstealth);
 				true
 			},
 			BraveHunt => {
 				// Delete forced state.
 				self.active_channel = None;
 				self.join_mode = mode;
+				self.send(VoiceHuntMessage::Unstealth);
+				true
+			},
+			Stalk => {
+				// Delete forced state.
+				// And instruct voice thread to not play anything...
+				self.active_channel = None;
+				self.join_mode = mode;
+				self.send(VoiceHuntMessage::Stealth);
 				true
 			},
 			Volume(vol) => {
@@ -273,9 +293,9 @@ impl VHState {
 	fn update_channel(&mut self) {
 		println!("{:?}", self.population_counts);
 		if let Some(chan) = self.active_channel {
-			self.send(VoiceHuntMessage::Channel(chan));
+			self.send(VoiceHuntMessage::Channel(chan, true));
 		} else if let Some(Incumbent(_, chan)) = self.incumbent_channel {
-			self.send(VoiceHuntMessage::Channel(chan));
+			self.send(VoiceHuntMessage::Channel(chan, false));
 		} else {
 			self.send(VoiceHuntMessage::NoChannel);
 		}
@@ -342,9 +362,14 @@ enum SfxInput {
 fn play_bgm(
 		state: BgmClass,
 		vox: &mut Handler,
-		rng: &mut impl Rng
+		rng: &mut impl Rng,
+		stealth: bool,
 	) -> Option<LockedAudio> {
 	use BgmClass::*;
+
+	if stealth {
+		return None;
+	}
 
 	let el_list = match state {
 		NoBgm => { return None; },
@@ -364,9 +389,14 @@ fn play_bgm(
 fn play_sfx(
 		state: SfxClass,
 		vox: &mut Handler,
-		rng: &mut impl Rng
+		rng: &mut impl Rng,
+		stealth: bool,
 	) -> Option<LockedAudio> {
 	use SfxClass::*;
+
+	if stealth {
+		return None;
+	}
 
 	let el_list = match state {
 		NoSfx => { return None; },
@@ -379,7 +409,19 @@ fn play_sfx(
 		.ok()
 }
 
-fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, vol: f32) {
+enum WaitState {
+	Limited,
+	Queued(ChannelId),
+}
+
+fn felyne_life(
+		rx: Receiver<VoiceHuntMessage>,
+		tx: Sender<VoiceHuntResponse>,
+		manager_lock: Arc<Mutex<ClientVoiceManager>>,
+		guild_id: GuildId,
+		vol: f32,
+		self_tx: Sender<VoiceHuntMessage>,
+	) {
 	let timer = Duration::from_millis(VOICEHUNT_FRAME_TIME);
 	let mut rng = thread_rng();
 	let vol_range = Uniform::new(0.3,0.4);
@@ -394,6 +436,9 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 	let mut leaving = false;
 
 	let mut curr_chan = None;
+	let mut next_chan = Arc::new(Mutex::new(None));
+
+	let mut stealthy = false;
 
 	let mut bgm_machine = TimedMachine::new(BgmClass::NoBgm);
 	{
@@ -464,7 +509,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 	'escape: loop {
 		match rx.try_recv() {
-			Ok(VoiceHuntMessage::Channel(chan)) => {
+			Ok(VoiceHuntMessage::Channel(chan, demand)) => {
 				let new_join = match curr_chan {
 					Some(chan_old) => chan_old != chan,
 					None => true,
@@ -474,12 +519,49 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 				let mut manager = manager_lock.lock();
 
 				if new_join {
+					if !demand {
+						let spawn_joiner = {
+							let mut nc = next_chan.lock();
+							let already_spawned = nc.is_some();
+							if already_spawned {
+								*nc = Some(WaitState::Queued(chan));
+							} else {
+								*nc = Some(WaitState::Limited);
+							}
+							
+							!already_spawned
+						};
+
+						if spawn_joiner {
+							// spawn a thread and block future non-demands, but
+							// ensure that the current demand is acted upon.
+							let inner_chan = next_chan.clone();
+							let newer_tx = self_tx.clone();
+							thread::spawn(move || {
+								thread::sleep(Duration::from_secs(5));
+								let mut nc = inner_chan.lock();
+								if let Some(WaitState::Queued(chan)) = *nc {
+									newer_tx.send(VoiceHuntMessage::Channel(chan, false));
+								}
+								*nc = None;
+							});
+						} else {
+							// don't actually join; just go home...
+							continue;
+						}
+					}
+
+
+
 					bgm_machine.refresh();
 					sfx_machine.refresh();
+					curr_sfx = None;
+					curr_bgm = None;
 
 					if manager.join(guild_id, chan).is_some() {
 						// test play
 						let mut handler = manager.get_mut(guild_id).unwrap();
+						handler.stop();
 						// Testing voice receive---example 10.
 						// GOAL: ducking!
 						handler.listen(Some(Box::new(VoiceHuntReceiver::new())));
@@ -498,7 +580,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 								.expect("Should have reached Ambience...")
 						};
 
-						curr_bgm = play_bgm(state, &mut handler, &mut rng)
+						curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy)
 							.map(|aud_lock| {
 								{
 									let mut aud = aud_lock.lock();
@@ -546,7 +628,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 						let state = bgm_machine.advance(BgmInput::MoveOutro)
 							.expect("Can always use outro...");
 
-						curr_bgm = play_bgm(state, &mut handler, &mut rng)
+						curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy)
 							.map(|aud_lock| {
 								{
 									let mut aud = aud_lock.lock();
@@ -577,6 +659,12 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 				curr_vol = new_vol;
 			},
+			Ok(VoiceHuntMessage::Stealth) => {
+				stealthy = true;
+			},
+			Ok(VoiceHuntMessage::Unstealth) => {
+				stealthy = false;
+			},
 			Err(TryRecvError::Empty) => {
 				// If we receieved nothing, then we can perform an update.
 				// Iteration, then wait.
@@ -606,7 +694,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 					if let Some(mut handler) = manager.get_mut(guild_id){
 						if play_new {
 							if let Some(state) = sfx_machine.advance(SfxInput::Advance) {
-								curr_sfx = play_sfx(state, &mut handler, &mut rng)
+								curr_sfx = play_sfx(state, &mut handler, &mut rng, stealthy)
 									.map(|aud_lock| {
 										{
 											let mut aud = aud_lock.lock();
@@ -621,7 +709,7 @@ fn felyne_life(rx: Receiver<VoiceHuntMessage>, tx: Sender<VoiceHuntResponse>, ma
 
 						if play_new_bgm {
 							if let Some(state) = bgm_machine.advance(BgmInput::Advance) {
-								curr_bgm = play_bgm(state, &mut handler, &mut rng)
+								curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy)
 									.map(|aud_lock| {
 										{
 											let mut aud = aud_lock.lock();

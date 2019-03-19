@@ -166,6 +166,9 @@ fn main() {
 			.command("hunt", |c| c
 				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_join))
+			.command("watch", |c| c
+				.allowed_roles(MANAGE_ROLES)
+				.cmd(cmd_observe))
 			.command("cart", |c| c
 				.allowed_roles(MANAGE_ROLES)
 				.cmd(cmd_leave))
@@ -231,6 +234,26 @@ command!(cmd_join(ctx, msg, args) {
 
 	check_msg(msg.channel_id.say(&ctx.http, "Mrowr!"));
 });
+
+command!(cmd_observe(ctx, msg, args) {
+	// Get the guild ID.
+	let guild = match msg.guild(&ctx.cache) {
+		Some(c) => c.read().id,
+		None => {
+			return confused(&ctx, &msg);
+		},
+	};
+
+	// Turn first arg (hopefully a channel mention) into a real channel
+	voicehunt_control(
+		&ctx,
+		guild,
+		VoiceHuntCommand::Stalk,
+	);
+
+	check_msg(msg.channel_id.say(&ctx.http, "..."));
+});
+
 
 command!(cmd_leave(ctx, msg) {
 	// Get the guild ID.

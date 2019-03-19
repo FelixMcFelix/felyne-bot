@@ -84,7 +84,9 @@ impl VoiceHuntSession {
 		// rough idea:
 		// if timestamp is at risk of overflow, then finalise the existing
 		// session and start a new one.
-		let last_time = self.packets[self.packets.len() - 1].timestamp;
+		let last_time = self.packets.last()
+			.map(|x| x.timestamp)
+			.unwrap_or(timestamp);
 		let reduced = timestamp < last_time;
 
 		if reduced && last_time - timestamp > 2_000_000 {
