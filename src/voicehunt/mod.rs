@@ -90,10 +90,10 @@ pub struct VHState {
 }
 
 impl VHState {
-	fn new(guild_id: GuildId, user_id: UserId) -> Self {
+	fn new(guild_id: GuildId, user_id: UserId, vox_manager: Arc<Mutex<ClientVoiceManager>>) -> Self {
 		// NOTE: will need some further changes if I want to start
 		// in the Stalk or BraveHunt states...
-		VHState {
+		let mut out = VHState {
 			guild_id,
 			user_id,
 			user_states: HashMap::new(),
@@ -107,7 +107,29 @@ impl VHState {
 
 			huntsim_tx: None,
 			huntsim_rx: None,
-		}
+		};
+
+		out.control(vox_manager, VoiceHuntCommand::Stalk);
+
+		out
+	}
+
+	fn launch_felyne_thread(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>) {
+		let (sender, receiver) = channel();
+		let (reverse_sender, reverse_receiver) = channel();
+		let guild_id = self.guild_id;
+		let vol = self.volume;
+
+		let self_tx = sender.clone();
+
+		// Begin!
+		thread::spawn(move || {
+			// Init state here
+			felyne_life(receiver, reverse_sender, vox_manager, guild_id, vol, self_tx);
+		});
+
+		self.huntsim_tx = Some(Arc::new(Mutex::new(sender)));
+		self.huntsim_rx = Some(Arc::new(Mutex::new(reverse_receiver)))
 	}
 
 	fn control(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, mode: VoiceHuntCommand) -> &mut Self {
@@ -121,21 +143,7 @@ impl VHState {
 				_ => {
 					// Moving from Carted to active mode.
 					// Spawn thread.
-					let (sender, receiver) = channel();
-					let (reverse_sender, reverse_receiver) = channel();
-					let guild_id = self.guild_id;
-					let vol = self.volume;
-
-					let self_tx = sender.clone();
-
-					// Begin!
-					thread::spawn(move || {
-						// Init state here
-						felyne_life(receiver, reverse_sender, vox_manager, guild_id, vol, self_tx);
-					});
-
-					self.huntsim_tx = Some(Arc::new(Mutex::new(sender)));
-					self.huntsim_rx = Some(Arc::new(Mutex::new(reverse_receiver)));
+					self.launch_felyne_thread(vox_manager);
 				}
 			}
 		}
@@ -436,7 +444,7 @@ fn felyne_life(
 	let mut leaving = false;
 
 	let mut curr_chan = None;
-	let mut next_chan = Arc::new(Mutex::new(None));
+	let next_chan = Arc::new(Mutex::new(None));
 
 	let mut stealthy = false;
 
@@ -751,28 +759,31 @@ fn felyne_life(
 pub fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntCommand) {
 	let mut datas = ctx.data.write();
 	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
+	let also_vox_lock = voice_manager_lock.clone();
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id))
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, also_vox_lock))
 		.control(voice_manager_lock, mode);
 }
 
 
 pub fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
 	let mut datas = ctx.data.write();
+	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id))
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, voice_manager_lock))
 		.register_user_state(&vox, true);
 }
 
 pub fn voicehunt_complete_update(ctx: &Context, guild_id: GuildId, voice_states: HashMap<UserId, VoiceState>) {
 	let mut datas = ctx.data.write();
+	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id))
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, voice_manager_lock))
 		.register_user_states(voice_states);
 }
