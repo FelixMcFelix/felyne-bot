@@ -54,7 +54,6 @@ struct VoicePacketMetadata {
 
 #[derive(Debug)]
 struct VoiceHuntSession {
-	packet_chain: Vec<PacketChainLink>,
 	packets: Vec<VoicePacketMetadata>
 }
 
@@ -68,7 +67,6 @@ enum PacketChainLink {
 impl VoiceHuntSession {
 	fn new() -> Self {
 		Self { 
-			packet_chain: vec![],
 			packets: vec![],
 		}
 	}
@@ -91,7 +89,6 @@ impl VoiceHuntSession {
 
 		if reduced && last_time - timestamp > 2_000_000 {
 			let mut replacement = Self::new();
-			mem::swap(&mut self.packet_chain, &mut replacement.packet_chain);
 			mem::swap(&mut self.packets, &mut replacement.packets);
 
 			// mem::swap(self, &mut replacement);
@@ -99,6 +96,7 @@ impl VoiceHuntSession {
 		}
 
 		self.packets.push(pkt);
+		println!("Now storing: {} packets.", self.packets.len());
 	}
 
 	fn finalise(&mut self) {
@@ -228,7 +226,7 @@ impl AudioReceiver for VoiceHuntReceiver {
 	}
 
 	fn voice_packet(&mut self, ssrc: u32, sequence: u16, timestamp: u32, _stereo: bool, _data: &[i16], compressed_size: usize) {
-		// println!("pkt from {:?}/{}", ssrc, sequence);
+		 println!("pkt from {:?}/{}", ssrc, sequence);
 		let sess = self.sessions.entry(ssrc).or_insert_with(VoiceHuntSession::new);
 		sess.record(timestamp, sequence, compressed_size);
 	}
