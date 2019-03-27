@@ -99,6 +99,7 @@ impl VoiceHuntSession {
 		}
 
 		self.packets.push(pkt);
+		// println!("Now at {:?}", self.packets.len());
 	}
 
 	fn finalise(&mut self) {

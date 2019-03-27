@@ -597,6 +597,18 @@ fn felyne_life(
 								aud_lock
 							});
 
+						if stealthy {
+							// Play one sound so that discord will ACTUALLY give us voice packets...
+							curr_sfx = play_sfx(SfxClass::Cat, &mut handler, &mut rng, false)
+								.map(|aud_lock| {
+									{
+										let mut aud = aud_lock.lock();
+										aud.volume(0.1 * curr_vol);
+									}
+									aud_lock
+								});
+						}
+
 						curr_chan = Some(chan);
 					} else {
 						println!("Failed to connect to {:?}!", chan);
