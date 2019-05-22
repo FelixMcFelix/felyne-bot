@@ -10,13 +10,27 @@ use crate::{
 	constants::*,
 	voicehunt::*,
 };
+use log::*;
 use serenity::{
 	client::{
 		*,
 		bridge::voice::ClientVoiceManager,
 	},
-    command,
-	framework::standard::{Args, CommandError, StandardFramework},
+	framework::standard::{
+		macros::{
+			check,
+			command,
+			group,
+			help,
+		},
+		Args,
+		CheckResult,
+		CommandError,
+		CommandGroup,
+		CommandOptions,
+		CommandResult,
+		StandardFramework,
+	},
 	model::prelude::*,
 	prelude::*,
 	Result as SResult,
@@ -29,11 +43,10 @@ use std::{
 	io::prelude::*,
 	sync::Arc,
 };
-use typemap::Key;
 
 struct VoiceManager;
 
-impl Key for VoiceManager {
+impl TypeMapKey for VoiceManager {
 	type Value = Arc<Mutex<ClientVoiceManager>>;
 }
 
@@ -51,7 +64,6 @@ impl EventHandler for FelyneEvts {
 			},
 		};
 		
-		// println!("{:?}", msg);
 		watchcat(&ctx, guild_id, WatchcatCommand::BufferMsg(Box::new(msg)));
 	}
 
@@ -90,7 +102,7 @@ impl EventHandler for FelyneEvts {
 		voicehunt_complete_update(&ctx, guild.id, guild.voice_states);
 	}
 
-	fn voice_state_update(&self, ctx: Context, maybe_guild: Option<GuildId>, vox: VoiceState) {
+	fn voice_state_update(&self, ctx: Context, maybe_guild: Option<GuildId>, _old_vox: Option<VoiceState>, vox: VoiceState) {
 		if maybe_guild.is_none() {return;}
 		let guild_id = maybe_guild.unwrap();
 
@@ -134,14 +146,14 @@ fn main() {
 	let db = match db_conn() {
 		Ok(d) => d,
 		Err(e) => {
-			println!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
+			error!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
 			return;
 		}
 	};
 
 	// Try and build tables, if we don't have them.
 	if let Err(e) = init_db_tables(&db) {
-		println!("Nya nya nya?!?! (Couldn't setup db tables: {:?})", e);
+		error!("Nya nya nya?!?! (Couldn't setup db tables: {:?})", e);
 		return;
 	}
 
@@ -163,33 +175,31 @@ fn main() {
 			.configure(|c| c
 				.prefix("!")
 				.case_insensitivity(true))
-			.command("hunt", |c| c
-				.allowed_roles(MANAGE_ROLES)
-				.cmd(cmd_join))
-			.command("watch", |c| c
-				.allowed_roles(MANAGE_ROLES)
-				.cmd(cmd_observe))
-			.command("cart", |c| c
-				.allowed_roles(MANAGE_ROLES)
-				.cmd(cmd_leave))
-			.command("volume", |c| c
-				.known_as("vol")
-				.allowed_roles(MANAGE_ROLES)
-				.cmd(cmd_volume))
-			.command("log-to", |c| c
-				.allowed_roles(MANAGE_ROLES)
-				.cmd(cmd_log_to))
-			.command("github", |c| c
-				.cmd(cmd_github))
-			.command("ids", |c| c
-				.cmd(cmd_enumerate_voice_channels))
+			.group(&PUBLIC_GROUP)
+			.group(&CONTROL_GROUP)
 	);
 
 	// Now, log in.
 	client.start().expect("Argh! I couldn't connyect?!");
 }
 
-command!(cmd_log_to(ctx, msg, args) {
+group!({
+	name: "public",
+	options: {},
+	commands: [github, ids],
+});
+
+group!({
+	name: "control",
+	options: {
+		allowed_roles: ["certified cat wrangler"],//MANAGE_ROLES,
+	},
+	commands: [hunt, cart, volume, watch, log_to],
+});
+
+#[command]
+#[aliases("log-to")]
+fn log_to(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 	let out_chan = parse_chan_mention(&mut args);
 
 	if out_chan.is_none() {
@@ -209,9 +219,12 @@ command!(cmd_log_to(ctx, msg, args) {
 	watchcat(&ctx, guild_id, WatchcatCommand::SetChannel(out_chan));
 
 	check_msg(msg.channel_id.say(&ctx.http, "Mrowrorr! (I'll keep you nyotified!)"));
-});
 
-command!(cmd_join(ctx, msg, args) {
+	Ok(())
+}
+
+#[command]
+fn hunt(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
@@ -233,9 +246,12 @@ command!(cmd_join(ctx, msg, args) {
 	});
 
 	check_msg(msg.channel_id.say(&ctx.http, "Mrowr!"));
-});
 
-command!(cmd_observe(ctx, msg, args) {
+	Ok(())
+}
+
+#[command]
+fn watch(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
@@ -252,10 +268,12 @@ command!(cmd_observe(ctx, msg, args) {
 	);
 
 	check_msg(msg.channel_id.say(&ctx.http, "..."));
-});
 
+	Ok(())
+}
 
-command!(cmd_leave(ctx, msg) {
+#[command]
+fn cart(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
@@ -267,9 +285,13 @@ command!(cmd_leave(ctx, msg) {
 	voicehunt_control(&ctx, guild, VoiceHuntCommand::Carted);
 
 	check_msg(msg.channel_id.say(&ctx.http, "Mrr... :zzz:"));
-});
 
-command!(cmd_volume(ctx, msg, args) {
+	Ok(())
+}
+
+#[command]
+#[aliases("vol")]
+fn volume(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
@@ -288,10 +310,12 @@ command!(cmd_volume(ctx, msg, args) {
 	}
 
 	voicehunt_control(&ctx, guild, VoiceHuntCommand::Volume(vol));
-});
 
+	Ok(())
+}
 
-command!(cmd_enumerate_voice_channels(ctx, msg) {
+#[command]
+fn ids(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult { 
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
 		None => {
@@ -312,13 +336,18 @@ command!(cmd_enumerate_voice_channels(ctx, msg) {
 
 	let out = content.build();
 
-	check_msg(msg.author.dm(&ctx, |m| m.content(out)))
-});
+	check_msg(msg.author.dm(&ctx, |m| m.content(out)));
 
-command!(cmd_github(ctx, msg) {
+	Ok(())
+}
+
+#[command]
+fn github(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
 	// yeah whatever
-	check_msg(msg.channel_id.say(&ctx.http, "Mya! :heart: (https://github.com/FelixMcFelix/felyne-bot)"))
-});
+	check_msg(msg.channel_id.say(&ctx.http, "Mya! :heart: (https://github.com/FelixMcFelix/felyne-bot)"));
+	
+	Ok(())
+}
 
 pub fn parse_chan_mention(args: &mut Args) -> Option<ChannelId> {
 	let chan_name = args.single::<String>().ok()?;
@@ -340,6 +369,6 @@ pub fn confused(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
 
 pub fn check_msg(result: SResult<Message>) {
 	if let Err(why) = result {
-		println!("Error sending message: {:?}", why);
+		warn!("Error sending message: {:?}", why);
 	}
 }

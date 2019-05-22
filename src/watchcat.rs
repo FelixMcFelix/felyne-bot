@@ -1,17 +1,19 @@
 use crate::dbs::*;
 use crate::constants::*;
-use parking_lot::Mutex;
+use log::*;
 use rand::random;
 use rusqlite::{Connection, Result as SQLResult};
-use serenity::client::*;
-use serenity::model::prelude::*;
-use serenity::utils::*;
+use serenity::{
+	client::*,
+	model::prelude::*,
+	prelude::*,
+	utils::*,
+};
 use std::{
 	collections::HashMap,
 	sync::Arc,
 	thread,
 };
-use typemap::Key;
 
 type Space = (String, Arc<Mutex<Option<Vec<u8>>>>);
 
@@ -38,7 +40,7 @@ impl AttachmentHolder {
 						let mut store_space = inner_obj.lock();
 						*store_space = Some(val);
 					},
-					Err(e) => println!("Couldn't download attachment {}: {:?}", a.filename, e),
+					Err(e) => warn!("Couldn't download attachment {}: {:?}", a.filename, e),
 				}
 			});
 
@@ -123,7 +125,7 @@ impl GuildDeleteData {
 
 pub struct DeleteWatchcat;
 
-impl Key for DeleteWatchcat {
+impl TypeMapKey for DeleteWatchcat {
 	type Value = HashMap<GuildId, GuildDeleteData>;
 }
 
@@ -181,7 +183,7 @@ fn upsert_watchcat(db: &Connection, guild_id: GuildId, channel_id: ChannelId) {
 		"INSERT OR REPLACE INTO del_watchcat (guild_id, channel_id) VALUES (?,?);",
 		&[&t_g_id.to_string(), &t_c_id.to_string()],
 	) {
-		println!("Nya?! (Couldn't write del_watchcat db updates.){:?}", e);
+		error!("Nya?! (Couldn't write del_watchcat db updates.){:?}", e);
 	}
 }
 
@@ -203,7 +205,7 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId,
 						msg_full = Some(message);
 					}
 				},
-				None => println!("{}: None", curr),
+				None => info!("{}: None", curr),
 			}
 			curr += 1;
 		};
@@ -253,10 +255,8 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId,
 				}
 			})
 		) {
-			Ok(_) => {
-				// println!("Apparently sent: {:?}", mess);
-			},
-			Err(e) => {println!("{:?}", e);},
+			Ok(_) => {},
+			Err(e) => {warn!("Issue recording delete: {:?}", e);},
 		}
 
 		if let Some(message) = msg_full {

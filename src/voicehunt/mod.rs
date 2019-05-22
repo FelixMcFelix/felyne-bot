@@ -6,7 +6,7 @@ use crate::{
 	VoiceManager,
 };
 
-use parking_lot::Mutex;
+use log::*;
 use rand::{
 	distributions::*,
 	thread_rng,
@@ -19,6 +19,7 @@ use serenity::{
 		bridge::voice::ClientVoiceManager,
 	},
 	model::prelude::*,
+	prelude::*,
 	voice::{
 		ffmpeg, Handler, LockedAudio,
 	},
@@ -37,11 +38,10 @@ use std::{
 		Instant
 	},
 };
-use typemap::Key;
 
 pub struct VoiceHunt;
 
-impl Key for VoiceHunt {
+impl TypeMapKey for VoiceHunt {
 	type Value = HashMap<GuildId, VHState>;
 }
 
@@ -215,7 +215,7 @@ impl VHState {
 			let tx = lock.lock();
 
 			if let Err(e) = tx.send(msg) {
-				println!("[VoiceHunt] Failed to send message: {:?}", e);
+				warn!("[VoiceHunt] Failed to send message: {:?}", e);
 			}
 		}
 	}
@@ -299,7 +299,7 @@ impl VHState {
 	}
 
 	fn update_channel(&mut self) {
-		println!("{:?}", self.population_counts);
+		info!("{:?}", self.population_counts);
 		if let Some(chan) = self.active_channel {
 			self.send(VoiceHuntMessage::Channel(chan, true));
 		} else if let Some(Incumbent(_, chan)) = self.incumbent_channel {
@@ -510,11 +510,6 @@ fn felyne_life(
 			.add_transition(Bonus, NoSfx, Advance);
 	}
 
-	// {
-	//  let mut manager = manager_lock.lock();
-	//  println!("---\n{:?}", *manager);
-	// }
-
 	'escape: loop {
 		match rx.try_recv() {
 			Ok(VoiceHuntMessage::Channel(chan, demand)) => {
@@ -611,7 +606,7 @@ fn felyne_life(
 
 						curr_chan = Some(chan);
 					} else {
-						println!("Failed to connect to {:?}!", chan);
+						error!("Failed to connect to {:?}!", chan);
 					}
 				}
 			},

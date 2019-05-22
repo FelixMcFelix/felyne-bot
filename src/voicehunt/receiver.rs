@@ -1,6 +1,6 @@
 use crate::constants::TRACE_DIR;
 
-use bincode;
+use log::*;
 use serde::{
 	Deserialize,
 	Serialize,
@@ -96,7 +96,6 @@ impl VoiceHuntSession {
 		}
 
 		self.packets.push(pkt);
-		// println!("Now at {:?}", self.packets.len());
 	}
 
 	fn finalise(&mut self) {
@@ -113,7 +112,7 @@ impl VoiceHuntSession {
 		);
 
 		for packet in &self.packets {
-			println!("{:?}", packet);
+			trace!("Packet with len: {:?}", packet);
 			let update = if let Some(pkt_old) = last_packet {
 				// gaps in sequence are dropped packets.
 				let mut target_sequence = pkt_old.sequence.wrapping_add(1);
@@ -161,7 +160,7 @@ impl VoiceHuntSession {
 				if standard_order {
 					while target_sequence != packet.sequence {
 						if dropped_packets == 0 {
-							println!("Expected {:?}, making up for {:?}", packet.sequence, target_sequence);
+							info!("Expected {:?}, making up for {:?}", packet.sequence, target_sequence);
 						}
 						output.push(PacketChainLink::Missing(target_sequence));
 						target_sequence = target_sequence.wrapping_add(1);
@@ -169,7 +168,7 @@ impl VoiceHuntSession {
 					}
 
 					if dropped_packets != 0 {
-						println!("Pushed {} missing packets from {} to {}.", dropped_packets, pkt_old.sequence.wrapping_add(1), target_sequence);
+						info!("Pushed {} missing packets from {} to {}.", dropped_packets, pkt_old.sequence.wrapping_add(1), target_sequence);
 					}
 				}
 
@@ -220,25 +219,21 @@ fn finalise_audio_session(mut a: VoiceHuntSession) {
 
 impl AudioReceiver for VoiceHuntReceiver {
 	fn speaking_update(&mut self, ssrc: u32, user_id: u64, _speaking: bool) {
-		// println!("User {} (sess {}) is now speaking? {}", user_id, ssrc, _speaking);
 		let _ = self.sessions.entry(ssrc).or_insert_with(VoiceHuntSession::new);
 		let _ = self.user_map.entry(user_id).or_insert(ssrc);
 	}
 
 	fn voice_packet(&mut self, ssrc: u32, sequence: u16, timestamp: u32, _stereo: bool, _data: &[i16], compressed_size: usize) {
-		 println!("pkt from {:?}/{}", ssrc, sequence);
 		let sess = self.sessions.entry(ssrc).or_insert_with(VoiceHuntSession::new);
 		sess.record(timestamp, sequence, compressed_size);
 	}
 
 	fn client_connect(&mut self, ssrc: u32, user_id: u64) {
-		// println!("User {} connected to session {}", user_id, ssrc);
 		let _ = self.user_map.entry(user_id).or_insert(ssrc);
 		let _ = self.sessions.entry(ssrc).or_insert_with(VoiceHuntSession::new);
 	}
 
 	fn client_disconnect(&mut self, user_id: u64) {
-		// println!("User {} disconnected", user_id);
 		if let Some(ssrc) = self.user_map.remove(&user_id) {
 			if let Some(sess) = self.sessions.remove(&ssrc) {
 				// must be certain that we'er not hanging the audio thread...
