@@ -17,12 +17,12 @@ serde = { version = "1", features = ["derive"] }
 
 [dependencies.serenity]
 features = ["cache", "framework", "standard_framework", "voice", "utils"]
-#version = "0.5"
+version = "0.6"
 # path = "../serenity/"
 #git = "https://github.com/FelixMcFelix/serenity.git"
-git = "https://github.com/serenity-rs/serenity.git"
+#git = "https://github.com/serenity-rs/serenity.git"
 #branch = "voice-event-changes"
-branch = "v0.6.x"
+#branch = "v0.6.x"
 
-[patch.crates-io]
-audiopus = { git = "https://github.com/Lakelezz/audiopus", branch = "stable-changes" }
+#[patch.crates-io]
+#audiopus = { git = "https://github.com/Lakelezz/audiopus", branch = "stable-changes" }

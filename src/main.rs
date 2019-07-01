@@ -363,7 +363,7 @@ pub fn parse_chan_mention(args: &mut Args) -> Option<ChannelId> {
 // }
 
 pub fn confused(ctx: &Context, msg: &Message) -> Result<(), CommandError> {
-	check_msg(msg.reply(&ctx, "???"));
+	check_msg(msg.reply(ctx, "???"));
 	Ok(())
 }
 
