@@ -173,7 +173,7 @@ pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 fn select_watchcat(db: &Connection, guild_id: GuildId) -> SQLResult<u64> {
 	let GuildId(t_id) = guild_id;
 	db.query_row("SELECT channel_id FROM del_watchcat WHERE guild_id=?", &[&t_id.to_string()],
-		|row| {let r: String = row.get(0); r.parse::<u64>().unwrap()})
+		|row| {row.get(0).map(|r: String| r.parse::<u64>().unwrap())})
 }
 
 fn upsert_watchcat(db: &Connection, guild_id: GuildId, channel_id: ChannelId) {
