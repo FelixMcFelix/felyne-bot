@@ -9,15 +9,15 @@ lto = true
 
 [dependencies]
 bincode = "1"
-env_logger = "0.5"
+env_logger = "0.7"
 log = "0.4"
 rusqlite = "0.20"
-rand = "0.6"
+rand = "0.7"
 serde = { version = "1", features = ["derive"] }
 
 [dependencies.serenity]
 features = ["cache", "framework", "standard_framework", "voice", "utils"]
-version = "0.6"
+version = "0.7"
 # path = "../serenity/"
 #git = "https://github.com/FelixMcFelix/serenity.git"
 #git = "https://github.com/serenity-rs/serenity.git"
