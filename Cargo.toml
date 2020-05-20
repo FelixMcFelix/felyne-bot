@@ -17,7 +17,7 @@ serde = { version = "1", features = ["derive"] }
 
 [dependencies.serenity]
 features = ["cache", "framework", "standard_framework", "voice", "utils"]
-version = "0.7"
+version = "0.8"
 # path = "../serenity/"
 #git = "https://github.com/FelixMcFelix/serenity.git"
 #git = "https://github.com/serenity-rs/serenity.git"

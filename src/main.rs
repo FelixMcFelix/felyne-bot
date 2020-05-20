@@ -183,19 +183,14 @@ fn main() {
 	client.start().expect("Argh! I couldn't connyect?!");
 }
 
-group!({
-	name: "public",
-	options: {},
-	commands: [github, ids],
-});
+#[group]
+#[commands(github, ids)]
+struct Public;
 
-group!({
-	name: "control",
-	options: {
-		allowed_roles: ["certified cat wrangler"],//MANAGE_ROLES,
-	},
-	commands: [hunt, cart, volume, watch, log_to],
-});
+#[group]
+#[allowed_roles("certified cat wrangler")]
+#[commands(hunt, cart, volume, watch, log_to)]
+struct Control;
 
 #[command]
 #[aliases("log-to")]
