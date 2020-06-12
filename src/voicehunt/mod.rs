@@ -3,16 +3,25 @@ pub mod receiver;
 use crate::{
 	automata::*,
 	constants::*,
+	CachedSound,
+	Resources,
+	RxMap,
 	VoiceManager,
 };
-
+use crossbeam::channel::{
+	self,
+	Receiver,
+	Sender,
+	TryRecvError,
+};
+use dashmap::DashMap;
 use log::*;
 use rand::{
 	distributions::*,
 	thread_rng,
 	Rng,
 };
-use receiver::VoiceHuntReceiver;
+use receiver::{listen_in, ReceiverSignal, VoiceHuntReceiver};
 use serenity::{
 	client::{
 		*,
@@ -21,16 +30,19 @@ use serenity::{
 	model::prelude::*,
 	prelude::*,
 	voice::{
-		ffmpeg, Handler, LockedAudio,
+		events::{Event, TrackEvent},
+		tracks::{
+			Track,
+			TrackCommand,
+			TrackHandle,
+		},
+		ffmpeg, Handler,
 	},
 };
 use std::{
 	collections::hash_map::{HashMap, Entry},
 	sync::{
 		Arc,
-		mpsc::{
-			Sender, Receiver, channel, TryRecvError,
-		},
 	},
 	thread,
 	time::{
@@ -85,12 +97,12 @@ pub struct VHState {
 	active_channel: Option<ChannelId>,
 	incumbent_channel: Option<Incumbent>,
 
-	huntsim_tx: Option<Arc<Mutex<Sender<VoiceHuntMessage>>>>,
-	huntsim_rx: Option<Arc<Mutex<Receiver<VoiceHuntResponse>>>>,
+	huntsim_tx: Option<Sender<VoiceHuntMessage>>,
+	huntsim_rx: Option<Receiver<VoiceHuntResponse>>,
 }
 
 impl VHState {
-	fn new(guild_id: GuildId, user_id: UserId, vox_manager: Arc<Mutex<ClientVoiceManager>>) -> Self {
+	fn new(guild_id: GuildId, user_id: UserId, vox_manager: Arc<Mutex<ClientVoiceManager>>, resources: RxMap) -> Self {
 		// NOTE: will need some further changes if I want to start
 		// in the Stalk or BraveHunt states...
 		let mut out = VHState {
@@ -109,14 +121,14 @@ impl VHState {
 			huntsim_rx: None,
 		};
 
-		out.control(vox_manager, VoiceHuntCommand::Stalk);
+		out.control(vox_manager, VoiceHuntCommand::Stalk, resources);
 
 		out
 	}
 
-	fn launch_felyne_thread(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>) {
-		let (sender, receiver) = channel();
-		let (reverse_sender, reverse_receiver) = channel();
+	fn launch_felyne_thread(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, resources: RxMap) {
+		let (sender, receiver) = channel::unbounded();
+		let (reverse_sender, reverse_receiver) = channel::unbounded();
 		let guild_id = self.guild_id;
 		let vol = self.volume;
 
@@ -125,14 +137,14 @@ impl VHState {
 		// Begin!
 		thread::spawn(move || {
 			// Init state here
-			felyne_life(receiver, reverse_sender, vox_manager, guild_id, vol, self_tx);
+			felyne_life(receiver, reverse_sender, vox_manager, guild_id, vol, self_tx, resources);
 		});
 
-		self.huntsim_tx = Some(Arc::new(Mutex::new(sender)));
-		self.huntsim_rx = Some(Arc::new(Mutex::new(reverse_receiver)))
+		self.huntsim_tx = Some(sender);
+		self.huntsim_rx = Some(reverse_receiver);
 	}
 
-	fn control(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, mode: VoiceHuntCommand) -> &mut Self {
+	fn control(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, mode: VoiceHuntCommand, resources: RxMap) -> &mut Self {
 		// Note: we can read from the ShareMap because entrant code is guaranteed to have the lock.
 		use crate::VoiceHuntCommand::*;
 
@@ -143,7 +155,7 @@ impl VHState {
 				_ => {
 					// Moving from Carted to active mode.
 					// Spawn thread.
-					self.launch_felyne_thread(vox_manager);
+					self.launch_felyne_thread(vox_manager, resources);
 				}
 			}
 		}
@@ -152,10 +164,7 @@ impl VHState {
 		let chan_change = match mode {
 			Carted => {
 				self.send(VoiceHuntMessage::Cart);
-				if let Some(ref rx_safe) = self.huntsim_rx{
-					let rx_lock = rx_safe.clone();
-					let rx = rx_lock.lock();
-
+				if let Some(rx) = self.huntsim_rx.as_ref() {
 					'waitdone: loop {
 						match rx.try_recv() {
 							Ok(VoiceHuntResponse::Done) => {
@@ -210,10 +219,7 @@ impl VHState {
 	}
 
 	fn send(&mut self, msg: VoiceHuntMessage) {
-		if let Some(lock_arc) = self.huntsim_tx.as_ref() {
-			let lock = lock_arc.clone();
-			let tx = lock.lock();
-
+		if let Some(tx) = self.huntsim_tx.as_ref() {
 			if let Err(e) = tx.send(msg) {
 				warn!("[VoiceHunt] Failed to send message: {:?}", e);
 			}
@@ -311,12 +317,15 @@ impl VHState {
 }
 
 #[inline]
-fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId) {
+fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, receiver_chan: &mut Option<Sender<ReceiverSignal>>) {
 	let mut manager = manager_lock.lock();
 
 	if let Some(handler) = manager.get_mut(guild_id) {
 		handler.stop();
-		handler.listen(None);
+		if let Some(chan) = receiver_chan {
+			chan.send(ReceiverSignal::Poison);
+		}
+		*receiver_chan = None;
 	}
 
 	manager.leave(guild_id);
@@ -372,7 +381,9 @@ fn play_bgm(
 		vox: &mut Handler,
 		rng: &mut impl Rng,
 		stealth: bool,
-	) -> Option<LockedAudio> {
+		resources: &RxMap,
+		donezo: &Sender<FelyneEvt>,
+	) -> Option<TrackHandle> {
 	use BgmClass::*;
 
 	if stealth {
@@ -389,9 +400,21 @@ fn play_bgm(
 		Outro => SLEEP,
 	};
 
-	ffmpeg(format!("bgm/{}", random_element(el_list, rng)))
-		.map(|source| vox.play_returning(source))
-		.ok()
+	let chan = donezo.clone();
+
+	resources.get(random_element(el_list, rng))
+		.map(|guard| vox.play_source(guard.value().into()))
+		.map(move |track| {
+			track.add_event(
+				Event::Track(TrackEvent::End),
+				move |_song_ctx| {
+					println!("BGM End");
+					chan.send(FelyneEvt::BgmEnd);
+					None
+				},
+			);
+			track
+		})
 }
 
 fn play_sfx(
@@ -399,7 +422,9 @@ fn play_sfx(
 		vox: &mut Handler,
 		rng: &mut impl Rng,
 		stealth: bool,
-	) -> Option<LockedAudio> {
+		resources: &RxMap,
+		donezo: &Sender<FelyneEvt>,
+	) -> Option<TrackHandle> {
 	use SfxClass::*;
 
 	if stealth {
@@ -412,14 +437,32 @@ fn play_sfx(
 		Bonus => BONUS_SFX,
 	};
 
-	ffmpeg(format!("sfx/{}", random_element(el_list, rng)))
-		.map(|source| vox.play_returning(source))
-		.ok()
+	let chan = donezo.clone();
+
+	resources.get(random_element(el_list, rng))
+		.map(|guard| vox.play_source(guard.value().into()))
+		.map(move |track| {
+			track.add_event(
+				Event::Track(TrackEvent::End),
+				move |_song_ctx| {
+					println!("SFX End");
+					chan.send(FelyneEvt::SfxEnd);
+					None
+				},
+			);
+			track
+		})
 }
 
 enum WaitState {
 	Limited,
 	Queued(ChannelId),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FelyneEvt {
+	BgmEnd,
+	SfxEnd,
 }
 
 fn felyne_life(
@@ -429,6 +472,7 @@ fn felyne_life(
 		guild_id: GuildId,
 		vol: f32,
 		self_tx: Sender<VoiceHuntMessage>,
+		resources: RxMap,
 	) {
 	let timer = Duration::from_millis(VOICEHUNT_FRAME_TIME);
 	let mut rng = thread_rng();
@@ -436,10 +480,12 @@ fn felyne_life(
 	let bgm_vol_range = Uniform::new(0.15,0.2);
 	let music_vol = 0.3;
 
+	let (sound_tx, sound_rx) = channel::bounded(2);
+
 	let mut curr_vol = vol;
 
-	let mut curr_sfx: Option<LockedAudio> = None;
-	let mut curr_bgm: Option<LockedAudio> = None;
+	let mut curr_sfx: Option<TrackHandle> = None;
+	let mut curr_bgm: Option<TrackHandle> = None;
 
 	let mut leaving = false;
 
@@ -449,6 +495,8 @@ fn felyne_life(
 	let mut stealthy = false;
 
 	let mut bgm_machine = TimedMachine::new(BgmClass::NoBgm);
+
+	let mut receiver_chan = None;
 	{
 		use BgmClass::*;
 		use BgmInput::*;
@@ -567,7 +615,7 @@ fn felyne_life(
 						handler.stop();
 						// Testing voice receive---example 10.
 						// GOAL: ducking!
-						handler.listen(Some(Box::new(VoiceHuntReceiver::new())));
+						receiver_chan = Some(listen_in(&mut handler));
 
 						let state = if let Some(s) = bgm_machine.advance(BgmInput::TryIntro){
 							sfx_machine.cause_cooldown(
@@ -583,24 +631,18 @@ fn felyne_life(
 								.expect("Should have reached Ambience...")
 						};
 
-						curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy)
-							.map(|aud_lock| {
-								{
-									let mut aud = aud_lock.lock();
-									aud.volume(1.0 * curr_vol);
-								}
-								aud_lock
+						curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy, &resources, &sound_tx)
+							.map(|track| {
+								track.set_volume(curr_vol);
+								track
 							});
 
 						if stealthy {
 							// Play one sound so that discord will ACTUALLY give us voice packets...
-							curr_sfx = play_sfx(SfxClass::Cat, &mut handler, &mut rng, false)
-								.map(|aud_lock| {
-									{
-										let mut aud = aud_lock.lock();
-										aud.volume(0.1 * curr_vol);
-									}
-									aud_lock
+							curr_sfx = play_sfx(SfxClass::Cat, &mut handler, &mut rng, false, &resources, &sound_tx)
+								.map(|track| {
+									track.set_volume(0.1 * curr_vol);
+									track
 								});
 						}
 
@@ -611,30 +653,24 @@ fn felyne_life(
 				}
 			},
 			Ok(VoiceHuntMessage::NoChannel) => {
-				quit_vox_channel(manager_lock.clone(), guild_id);
+				quit_vox_channel(manager_lock.clone(), guild_id, &mut receiver_chan);
 				curr_chan = None;
 			},
 			Ok(VoiceHuntMessage::Cart) => {
 				if leaving {
-					quit_vox_channel(manager_lock.clone(), guild_id);
+					quit_vox_channel(manager_lock.clone(), guild_id, &mut receiver_chan);
 					break 'escape;
 				} else {
 					leaving = true;
 
-					if let Some(ref safe) = curr_sfx {
-						let lock = safe.clone();
-						let mut aud = lock.lock();
-
-						aud.pause();
+					if let Some(track) = curr_sfx.as_ref() {
+						track.pause();
 					}
 
 					curr_sfx = None;
 
-					if let Some(ref safe) = curr_bgm {
-						let lock = safe.clone();
-						let mut aud = lock.lock();
-
-						aud.pause();
+					if let Some(track) = curr_bgm.as_ref() {
+						track.pause();
 					}
 
 					let mut manager = manager_lock.lock();
@@ -643,33 +679,27 @@ fn felyne_life(
 						let state = bgm_machine.advance(BgmInput::MoveOutro)
 							.expect("Can always use outro...");
 
-						curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy)
-							.map(|aud_lock| {
-								{
-									let mut aud = aud_lock.lock();
-
-									aud.volume(0.6* curr_vol);
-								}
-								aud_lock
+						curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy, &resources, &sound_tx)
+							.map(|track| {
+								track.set_volume(0.6 * curr_vol);
+								track
 							});
 					}
 				}
 			},
 			Ok(VoiceHuntMessage::Volume(new_vol)) => {
-				if let Some(ref safe) = curr_sfx {
-					let lock = safe.clone();
-					let mut aud = lock.lock();
-
-					aud.volume /= curr_vol;
-					aud.volume *= new_vol;
+				if let Some(track) = curr_sfx.as_ref() {
+					track.action(move |true_track| {
+						let vol = true_track.volume();
+						true_track.set_volume((vol / curr_vol) * new_vol);
+					});
 				}
 
-				if let Some(ref safe) = curr_bgm {
-					let lock = safe.clone();
-					let mut aud = lock.lock();
-
-					aud.volume /= curr_vol;
-					aud.volume *= new_vol;
+				if let Some(track) = curr_bgm.as_ref() {
+					track.action(move |true_track| {
+						let vol = true_track.volume();
+						true_track.set_volume((vol / curr_vol) * new_vol);
+					});
 				}
 
 				curr_vol = new_vol;
@@ -684,69 +714,64 @@ fn felyne_life(
 				// If we receieved nothing, then we can perform an update.
 				// Iteration, then wait.
 
-				let play_new = bgm_machine.state() != BgmClass::Bonus && (curr_sfx.is_none() || {
-					let lock = curr_sfx.as_ref().expect("wtf").clone();
-					let aud = lock.lock();
+				let mut bgm_done = curr_bgm.is_none();
+				let mut sfx_done = curr_sfx.is_none();
 
-					if aud.finished && sfx_machine.state() != SfxClass::NoSfx {
-						// return to NoSfx...
-						sfx_machine.advance(SfxInput::Advance);
+				'localcheck: loop {
+					match sound_rx.try_recv() {
+						Ok(FelyneEvt::BgmEnd) => {
+							bgm_done = true;
+							curr_bgm = None;
+						},
+						Ok(FelyneEvt::SfxEnd) => {
+							sfx_done = true;
+							curr_sfx = None;
+						},
+						_ => break 'localcheck,
 					}
+				}
 
-					aud.finished
-				});
+				let can_play_sfx = bgm_machine.state() != BgmClass::Bonus && sfx_done;
 
-				let play_new_bgm = curr_bgm.is_none() || {
-					let lock = curr_bgm.as_ref().expect("wtf").clone();
-					let aud = lock.lock();
-
-					aud.finished
-				};
-
-				if play_new || play_new_bgm {
+				if can_play_sfx || bgm_done {
 					let mut manager = manager_lock.lock();
 					
 					if let Some(mut handler) = manager.get_mut(guild_id){
-						if play_new {
+						if can_play_sfx {
 							if let Some(state) = sfx_machine.advance(SfxInput::Advance) {
-								curr_sfx = play_sfx(state, &mut handler, &mut rng, stealthy)
-									.map(|aud_lock| {
-										{
-											let mut aud = aud_lock.lock();
-											let vol = vol_range.sample(&mut rng) * curr_vol;
-
-											aud.volume(vol);
-										}
-										aud_lock
-									});
+								if state != SfxClass::NoSfx {
+									curr_sfx = play_sfx(state, &mut handler, &mut rng, stealthy, &resources, &sound_tx)
+										.map(|track| {
+											track.set_volume(vol_range.sample(&mut rng) * curr_vol);
+											track
+										});
+									println!("{:?}", curr_sfx);
+								}
 							}
 						}
 
-						if play_new_bgm {
+						if bgm_done {
 							if let Some(state) = bgm_machine.advance(BgmInput::Advance) {
-								curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy)
-									.map(|aud_lock| {
-										{
-											let mut aud = aud_lock.lock();
-											let vol = if state.no_gargwa() {
-												music_vol
-											} else {
-												bgm_vol_range.sample(&mut rng)
-											} * curr_vol;
+								curr_bgm = play_bgm(state, &mut handler, &mut rng, stealthy, &resources, &sound_tx)
+									.map(|track| {
+										let vol = if state.no_gargwa() {
+											music_vol
+										} else {
+											bgm_vol_range.sample(&mut rng)
+										} * curr_vol;
 
-											aud.volume(vol);
-										}
-										aud_lock
+										track.set_volume(vol);
+										track
 									});
 							}
 						}
 					}
 				}
 
-				let outro_done = bgm_machine.state() == BgmClass::Outro && play_new_bgm;
+				let outro_done = bgm_machine.state() == BgmClass::Outro && bgm_done;
 
 				if outro_done {
-					quit_vox_channel(manager_lock.clone(), guild_id);
+					quit_vox_channel(manager_lock.clone(), guild_id, &mut receiver_chan);
 					break 'escape;
 				}
 
@@ -767,30 +792,42 @@ pub fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntComman
 	let mut datas = ctx.data.write();
 	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
 	let also_vox_lock = voice_manager_lock.clone();
+	let resources = datas.get::<Resources>()
+		.expect("Resources must exists after init...")
+		.clone();
+
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, also_vox_lock))
-		.control(voice_manager_lock, mode);
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, also_vox_lock, resources.clone()))
+		.control(voice_manager_lock, mode, resources);
 }
 
 
 pub fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
 	let mut datas = ctx.data.write();
 	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
+	let resources = datas.get::<Resources>()
+		.expect("Resources must exists after init...")
+		.clone();
+
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, voice_manager_lock))
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, voice_manager_lock, resources))
 		.register_user_state(&vox, true);
 }
 
 pub fn voicehunt_complete_update(ctx: &Context, guild_id: GuildId, voice_states: HashMap<UserId, VoiceState>) {
 	let mut datas = ctx.data.write();
 	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
+	let resources = datas.get::<Resources>()
+		.expect("Resources must exists after init...")
+		.clone();
+
 	datas.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, voice_manager_lock))
+		.or_insert_with(|| VHState::new(guild_id, ctx.cache.read().user.id, voice_manager_lock, resources.clone()))
 		.register_user_states(voice_states);
 }

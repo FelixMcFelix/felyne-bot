@@ -10,6 +10,7 @@ use crate::{
 	constants::*,
 	voicehunt::*,
 };
+use dashmap::DashMap;
 use log::*;
 use serenity::{
 	client::{
@@ -35,6 +36,18 @@ use serenity::{
 	prelude::*,
 	Result as SResult,
 	utils::*,
+	voice::{
+		self,
+        input::{
+            cached::{
+                CompressedSource,
+                CompressedSourceBase,
+                MemorySource,
+            },
+            Input,
+        },
+        Bitrate,
+    },
 };
 use std::{
 	collections::HashMap,
@@ -48,6 +61,31 @@ struct VoiceManager;
 
 impl TypeMapKey for VoiceManager {
 	type Value = Arc<Mutex<ClientVoiceManager>>;
+}
+
+struct Resources;
+
+type RxMap = Arc<DashMap<&'static str, CachedSound>>;
+
+impl TypeMapKey for Resources {
+	type Value = RxMap;
+}
+
+enum CachedSound {
+    Compressed(CompressedSourceBase),
+    Uncompressed(MemorySource),
+}
+
+impl From<&CachedSound> for Input {
+    fn from(obj: &CachedSound) -> Self {
+        use CachedSound::*;
+        match obj {
+            Compressed(c) => c.new_handle()
+                .expect("Opus errors on decoder creation are rare if we're copying valid settings.")
+                .into(),
+            Uncompressed(u) => u.new_handle().into(),
+        }
+    }
 }
 
 struct FelyneEvts;
@@ -167,7 +205,26 @@ fn main() {
 		data.insert::<VoiceManager>(Arc::clone(&client.voice_manager));
 		data.insert::<DeleteWatchcat>(HashMap::new());
 		data.insert::<VoiceHunt>(HashMap::new());
+
+		let resources = DashMap::new();
+		// println!("A");
+		add_resources(&resources, "bgm", BBQ, false);
+		// println!("A");
+		add_resources(&resources, "bgm", BBQ_RESULT, false);
+		add_resources(&resources, "bgm", SLEEP, false);
+		add_resources(&resources, "bgm", START, true);
+		add_resources(&resources, "bgm", AMBIENCE, true);
+		add_resources(&resources, "bgm", BGM, true);
+
+		add_resources(&resources, "sfx", SFX, false);
+		add_resources(&resources, "sfx", BONUS_SFX, false);
+
+		// println!("A");
+
+		data.insert::<Resources>(Arc::new(resources));
 	}
+
+	println!("SPF");
 
 	// Register all our nice commands etc.
 	client.with_framework(
@@ -176,11 +233,37 @@ fn main() {
 				.prefix("!")
 				.case_insensitivity(true))
 			.group(&PUBLIC_GROUP)
-			.group(&CONTROL_GROUP)
-	);
+			.group(&CONTROL_GROUP));
+
+	println!("FD");
 
 	// Now, log in.
 	client.start().expect("Argh! I couldn't connyect?!");
+
+	println!("Uh");
+}
+
+fn add_resources(
+	rx: &DashMap<&'static str, CachedSound>,
+	folder: &'static str,
+	files: &[&'static str],
+	compress: bool,
+) {
+	for file_id in files {
+		let file_name = format!("{}/{}", folder, file_id);
+		let base = voice::ffmpeg(&file_name).expect("File should be in root folder.");
+		let file = if compress {
+			let src = CompressedSource::new(base, Bitrate::BitsPerSecond(128_000), None)
+				.expect("Apparent critical failure to make file...");
+	        let _ = src.spawn_loader();
+			CachedSound::Compressed(src.into_sendable())
+		} else {
+			let src = MemorySource::new(base, None);
+	        let _ = src.spawn_loader();
+			CachedSound::Uncompressed(src)
+		};
+		rx.insert(file_id, file);
+	}
 }
 
 #[group]
@@ -194,7 +277,7 @@ struct Control;
 
 #[command]
 #[aliases("log-to")]
-fn log_to(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
+fn log_to(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	let out_chan = parse_chan_mention(&mut args);
 
 	if out_chan.is_none() {
@@ -219,7 +302,7 @@ fn log_to(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 }
 
 #[command]
-fn hunt(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
+fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
@@ -246,7 +329,7 @@ fn hunt(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 }
 
 #[command]
-fn watch(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
+fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
@@ -268,7 +351,7 @@ fn watch(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
 }
 
 #[command]
-fn cart(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
+fn cart(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
@@ -286,7 +369,7 @@ fn cart(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
 
 #[command]
 #[aliases("vol")]
-fn volume(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
+fn volume(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
@@ -310,7 +393,7 @@ fn volume(ctx: &mut Context, msg: &Message, mut args: Args) -> CommandResult {
 }
 
 #[command]
-fn ids(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult { 
+fn ids(ctx: &Context, msg: &Message, _args: Args) -> CommandResult { 
 	let guild = match msg.guild(&ctx.cache) {
 		Some(c) => c.read().id,
 		None => {
@@ -337,7 +420,7 @@ fn ids(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
 }
 
 #[command]
-fn github(ctx: &mut Context, msg: &Message, _args: Args) -> CommandResult {
+fn github(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// yeah whatever
 	check_msg(msg.channel_id.say(&ctx.http, "Mya! :heart: (https://github.com/FelixMcFelix/felyne-bot)"));
 	
