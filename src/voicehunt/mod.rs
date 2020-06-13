@@ -745,7 +745,6 @@ fn felyne_life(
 											track.set_volume(vol_range.sample(&mut rng) * curr_vol);
 											track
 										});
-									println!("{:?}", curr_sfx);
 								}
 							}
 						}
