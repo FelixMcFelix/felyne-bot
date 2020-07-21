@@ -13,11 +13,14 @@ crossbeam = "0.7"
 dashmap = "4.0.0-rc6"
 env_logger = "0.7"
 log = "0.4"
-rusqlite = "0.23"
+parking_lot = "0.11"
 rand = "0.7"
 serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.3", default-features = false, features = [ "runtime-tokio", "sqlite" ] }
+tokio = { version = "0.2", features = [ "full" ]}
 
 [dependencies.serenity]
 features = ["cache", "framework", "standard_framework", "voice", "utils"]
-git = "https://github.com/FelixMcFelix/serenity.git"
-rev = "4f6546e"
+# git = "https://github.com/FelixMcFelix/serenity.git"
+# rev = "4f6546e"
+path = "../serenity"

@@ -1,19 +1,32 @@
-use crate::dbs::*;
-use crate::constants::*;
+use crate::{
+	dbs::*,
+	constants::*,
+	Db,
+	TokioHandle,
+};
+use dashmap::DashMap;
 use log::*;
+use parking_lot::RwLock;
 use rand::random;
-use rusqlite::{Connection, Result as SQLResult};
 use serenity::{
 	client::*,
 	model::prelude::*,
 	prelude::*,
 	utils::*,
 };
+use sqlx::{
+	executor::RefExecutor,
+	prelude::*,
+	sqlite::SqliteRow,
+	Error as SqlError,
+	SqlitePool,
+};
 use std::{
 	collections::HashMap,
 	sync::Arc,
 	thread,
 };
+use tokio::task;
 
 type Space = (String, Arc<Mutex<Option<Vec<u8>>>>);
 
@@ -126,7 +139,7 @@ impl GuildDeleteData {
 pub struct DeleteWatchcat;
 
 impl TypeMapKey for DeleteWatchcat {
-	type Value = HashMap<GuildId, GuildDeleteData>;
+	type Value = DashMap<GuildId, Arc<RwLock<GuildDeleteData>>>;
 }
 
 pub enum WatchcatCommand {
@@ -136,53 +149,86 @@ pub enum WatchcatCommand {
 }
 
 pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
-	let mut datas = ctx.data.write();
-	let top_dog = datas.get_mut::<DeleteWatchcat>()
-		.unwrap()
-		.entry(guild_id)
-		.or_insert_with(|| GuildDeleteData::new(None));
+	let mut datas = ctx.data.read();
+	let top_dog_holder = datas.get::<DeleteWatchcat>()
+		.unwrap();
 
-	let db = db_conn().unwrap();
+	if !top_dog_holder.contains_key(&guild_id) {
+		top_dog_holder.insert(guild_id, Arc::new(RwLock::new(GuildDeleteData::new(None))));
+	}
+
+	let db = datas.get::<Db>().expect("DB conn installed...");
+	let handle = datas.get::<TokioHandle>().expect("Handle installed...");
 
 	if let SetChannel(_) = cmd {
 		
-	} else if let Ok(chan) = select_watchcat(&db, guild_id) {
-		top_dog.output_channel = Some(ChannelId(chan));
+	} else if let Ok(chan) = handle.block_on(select_watchcat(&db, guild_id)) {
+		top_dog_holder.update(&guild_id, |_k, top_do| {
+			let mut top_dog = top_do.write();
+			top_dog.output_channel = Some(ChannelId(chan));
+			top_do.clone()
+		});
 	}
 
 	use crate::WatchcatCommand::*;
 
 	match cmd {
 		SetChannel(chan) => {
-			top_dog.output_channel = Some(chan);
+			top_dog_holder.update(&guild_id, |_k, top_do| {
+				let mut top_dog = top_do.write();
+				top_dog.output_channel = Some(chan);
+				top_do.clone()
+			});
 
-			upsert_watchcat(&db, guild_id, chan);
+			handle.block_on(upsert_watchcat(&db, guild_id, chan));
 		},
 		ReportDelete(event_chan, msgs) => {
+			let top_do = top_dog_holder.get(&guild_id).unwrap();
+			let top_dog = top_do.read();
 			for msg in msgs {
 				report_delete(&top_dog, event_chan, msg, ctx);
 			}
 		},
 		BufferMsg(mut msg) => {
-			let attachments = AttachmentHolder::new(&mut msg.attachments);
-			top_dog.backup.add_and_march((msg, attachments));
+			top_dog_holder.update(&guild_id, move |_k, top_do| {
+				let mut m = msg.clone();
+				let attachments = AttachmentHolder::new(&mut m.attachments);
+				let mut top_dog = top_do.write();
+				top_dog.backup.add_and_march((m, attachments));
+				top_do.clone()
+			});
 		},
 	}
 }
 
-fn select_watchcat(db: &Connection, guild_id: GuildId) -> SQLResult<u64> {
+async fn select_watchcat(db: &SqlitePool, guild_id: GuildId) -> Result<u64, SqlError> {
 	let GuildId(t_id) = guild_id;
-	db.query_row("SELECT channel_id FROM del_watchcat WHERE guild_id=?", &[&t_id.to_string()],
-		|row| {row.get(0).map(|r: String| r.parse::<u64>().unwrap())})
+
+	// let db = db.acquire().await?;
+
+	sqlx::query("SELECT channel_id FROM del_watchcat WHERE guild_id = ?")
+		.bind(&t_id.to_string())
+		.map(|row: SqliteRow| {
+			let a: &str = row.get(0);
+			a.parse::<u64>()
+				.unwrap()
+			}
+		)
+		.fetch_one(db)
+		.await
 }
 
-fn upsert_watchcat(db: &Connection, guild_id: GuildId, channel_id: ChannelId) {
+async fn upsert_watchcat(db: &SqlitePool, guild_id: GuildId, channel_id: ChannelId) {
 	let GuildId(t_g_id) = guild_id;
 	let ChannelId(t_c_id) = channel_id;
-	if let Err(e) = db.execute(
-		"INSERT OR REPLACE INTO del_watchcat (guild_id, channel_id) VALUES (?,?);",
-		&[&t_g_id.to_string(), &t_c_id.to_string()],
-	) {
+
+	let query = sqlx::query("INSERT OR REPLACE INTO del_watchcat (guild_id, channel_id) VALUES (?,?);")
+		.bind(&t_g_id.to_string())
+		.bind(&t_c_id.to_string())
+		.execute(db)
+		.await;
+
+	if let Err(e) = query {
 		error!("Nya?! (Couldn't write del_watchcat db updates.){:?}", e);
 	}
 }

@@ -1,6 +1,8 @@
 mod automata;
+mod config;
 mod constants;
 mod dbs;
+mod server;
 mod voicehunt;
 mod watchcat;
 
@@ -49,6 +51,9 @@ use serenity::{
         Bitrate,
     },
 };
+use sqlx::{
+	sqlite::SqlitePool,
+};
 use std::{
 	collections::HashMap,
 	env,
@@ -56,6 +61,18 @@ use std::{
 	io::prelude::*,
 	sync::Arc,
 };
+
+struct Db;
+
+impl TypeMapKey for Db {
+	type Value = SqlitePool;
+}
+
+struct TokioHandle;
+
+impl TypeMapKey for TokioHandle {
+	type Value = tokio::runtime::Handle;
+}
 
 struct VoiceManager;
 
@@ -157,7 +174,8 @@ fn help() {
 	println!("Mrow mia mrowr?! (Myaster! One file! One token?!)");
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
 	env_logger::init();
 	// Check arg count -- do we have a file??
 	let args: Vec<_> = env::args().collect();
@@ -181,7 +199,7 @@ fn main() {
 		.expect("Naa nya! (Token invalid!)");
 
 	// Init the Database
-	let db = match db_conn() {
+	let mut db = match db_conn().await {
 		Ok(d) => d,
 		Err(e) => {
 			error!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
@@ -190,7 +208,7 @@ fn main() {
 	};
 
 	// Try and build tables, if we don't have them.
-	if let Err(e) = init_db_tables(&db) {
+	if let Err(e) = init_db_tables(&mut db.acquire().await.unwrap()).await {
 		error!("Nya nya nya?!?! (Couldn't setup db tables: {:?})", e);
 		return;
 	}
@@ -203,8 +221,11 @@ fn main() {
 	{
 		let mut data = client.data.write();
 		data.insert::<VoiceManager>(Arc::clone(&client.voice_manager));
-		data.insert::<DeleteWatchcat>(HashMap::new());
+		data.insert::<DeleteWatchcat>(DashMap::new());
 		data.insert::<VoiceHunt>(HashMap::new());
+
+		data.insert::<Db>(db);
+		data.insert::<TokioHandle>(tokio::runtime::Handle::current().clone());
 
 		let resources = DashMap::new();
 		// println!("A");
