@@ -11,8 +11,9 @@ use serde::{
 	Deserialize,
 	Serialize,
 };
+use serenity::async_trait;
 use serenity::voice::{
-	events::{CoreEvent, Event, EventContext},
+	events::{CoreEvent, Event, EventContext, EventHandler},
 	Handler,
 };
 use std::{
@@ -34,16 +35,101 @@ use std::{
 type Ssrc = u32;
 type Uid = u64;
 
+#[derive(Clone)]
 pub struct VoiceHuntReceiver {
-	sessions: DashMap<Ssrc, VoiceHuntSession>,
-	user_map: DashMap<Uid, Ssrc>,
+	sessions: Arc<DashMap<Ssrc, VoiceHuntSession>>,
+	user_map: Arc<DashMap<Uid, Ssrc>>,
+	rx: Receiver<ReceiverSignal>,
+	tx: Sender<ReceiverSignal>,
 }
 
 impl VoiceHuntReceiver {
-	pub fn new() -> Self { 
+	pub fn new() -> Self {
+		let (tx, rx) = channel::bounded(1);
 		Self { 
-			sessions: Default::default(),
-			user_map: Default::default(),
+			sessions: Arc::new(Default::default()),
+			user_map: Arc::new(Default::default()),
+			rx,
+			tx,
+		}
+	}
+
+	fn try_read_poison(&self) -> bool {
+	match self.rx.try_recv() {
+		Ok(ReceiverSignal::Poison) | Err(TryRecvError::Disconnected) => {
+			let _ = self.tx.send(ReceiverSignal::Poison);
+			true
+		},
+		Err(TryRecvError::Empty) => {
+			false
+		},
+	}
+}
+}
+
+#[async_trait]
+impl EventHandler for VoiceHuntReceiver {
+	async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+		if self.try_read_poison() {
+			Some(Event::Cancel)
+		} else {
+			match ctx {
+				EventContext::SpeakingStateUpdate(s) => {
+					if self.sessions.get(&s.ssrc).is_none() {
+						self.sessions.insert(s.ssrc, VoiceHuntSession::new());
+					}
+					if self.user_map.get(&s.user_id.0).is_none() {
+						self.user_map.insert(s.user_id.0, s.ssrc);
+					}
+
+					None
+				},
+				EventContext::VoicePacket {audio, packet, payload_offset} => {
+					println!("RTP");
+					let ssrc = packet.ssrc;
+
+					if self.sessions.get(&ssrc).is_none() {
+						self.sessions.insert(ssrc, VoiceHuntSession::new());
+					}
+
+					self.sessions.update(&ssrc, move |ssrc, sess| {
+						let mut n_sess = sess.clone();
+						n_sess.record(packet.timestamp.into(), packet.sequence.into(), packet.payload.len() - payload_offset);
+						n_sess
+					});
+
+					None
+				},
+				EventContext::RtcpPacket {..} => {
+					println!("RTCP");
+					None
+				},
+				EventContext::ClientConnect(s) => {
+					if self.sessions.get(&s.audio_ssrc).is_none() {
+						self.sessions.insert(s.audio_ssrc, VoiceHuntSession::new());
+					}
+					if self.user_map.get(&s.user_id.0).is_none() {
+						self.user_map.insert(s.user_id.0, s.audio_ssrc);
+					}
+
+					None
+				},
+				EventContext::ClientDisconnect(s) => {
+					if let Some(guard) = self.user_map.remove_take(&s.user_id.0) {
+						let (k, v) = guard.pair();
+						if let Some(guard) = self.sessions.remove_take(v) {
+							let (ssrc, sess) = guard.pair();
+							finalise_audio_session(sess.clone());
+						}
+					}
+
+					None
+				},
+				EventContext::SpeakingUpdate{..} => {
+					None
+				},
+				_ => None,
+			}
 		}
 	}
 }
@@ -237,149 +323,44 @@ pub enum ReceiverSignal {
 	Poison,
 }
 
-fn try_read_poison(rx: &Receiver<ReceiverSignal>, tx: &Sender<ReceiverSignal>) -> bool {
-	match rx.try_recv() {
-		Ok(ReceiverSignal::Poison) | Err(TryRecvError::Disconnected) => {
-			let _ = tx.send(ReceiverSignal::Poison);
-			true
-		},
-		Err(TryRecvError::Empty) => {
-			false
-		},
-	}
-}
-
 pub fn listen_in(handler: &mut Handler) -> Sender<ReceiverSignal> {
-	let vhr = Arc::new(VoiceHuntReceiver::new());
-	let (tx, rx) = channel::bounded(1);
+	let vhr = VoiceHuntReceiver::new();
+	let out_tx = vhr.tx.clone();
 
-	let n_tx = tx.clone();
-	let n_rx = rx.clone();
 	let n_vhr = vhr.clone();
 	handler.add_global_event(
 		CoreEvent::SpeakingStateUpdate.into(),
-		move |ctx| {
-			if try_read_poison(&n_rx, &n_tx) {
-				Some(Event::Cancel)
-			} else if let EventContext::SpeakingStateUpdate(s) = ctx {
-				if n_vhr.sessions.get(&s.ssrc).is_none() {
-					n_vhr.sessions.insert(s.ssrc, VoiceHuntSession::new());
-				}
-				if n_vhr.user_map.get(&s.user_id.0).is_none() {
-					n_vhr.user_map.insert(s.user_id.0, s.ssrc);
-				}
-
-				None
-			} else {
-				None
-			}
-		}
+		n_vhr,
 	);
 
-	let n_tx = tx.clone();
-	let n_rx = rx.clone();
 	let n_vhr = vhr.clone();
 	handler.add_global_event(
 		CoreEvent::VoicePacket.into(),
-		move |ctx| {
-			if try_read_poison(&n_rx, &n_tx) {
-				Some(Event::Cancel)
-			} else if let EventContext::VoicePacket {audio, packet, payload_offset} = ctx {
-				let ssrc = packet.ssrc;
-
-				if n_vhr.sessions.get(&ssrc).is_none() {
-					n_vhr.sessions.insert(ssrc, VoiceHuntSession::new());
-				}
-
-				n_vhr.sessions.update(&ssrc, move |ssrc, sess| {
-					let mut n_sess = sess.clone();
-					n_sess.record(packet.timestamp.into(), packet.sequence.into(), packet.payload.len() - payload_offset);
-					n_sess
-				});
-
-				None
-			} else {
-				None
-			}
-		}
+		n_vhr,
 	);
 
-	let n_tx = tx.clone();
-	let n_rx = rx.clone();
+	let n_vhr = vhr.clone();
 	handler.add_global_event(
 		CoreEvent::RtcpPacket.into(),
-		move |ctx| {
-			if try_read_poison(&n_rx, &n_tx) {
-				Some(Event::Cancel)
-			} else if let EventContext::RtcpPacket {..} = ctx {
-				None
-			} else {
-				None
-			}
-		}
+		n_vhr,
 	);
 
-	let n_tx = tx.clone();
-	let n_rx = rx.clone();
 	let n_vhr = vhr.clone();
 	handler.add_global_event(
 		CoreEvent::ClientConnect.into(),
-		move |ctx| {
-			if try_read_poison(&n_rx, &n_tx) {
-				Some(Event::Cancel)
-			} else if let EventContext::ClientConnect(s) = ctx {
-				if n_vhr.sessions.get(&s.audio_ssrc).is_none() {
-					n_vhr.sessions.insert(s.audio_ssrc, VoiceHuntSession::new());
-				}
-				if n_vhr.user_map.get(&s.user_id.0).is_none() {
-					n_vhr.user_map.insert(s.user_id.0, s.audio_ssrc);
-				}
-
-				None
-			} else {
-				None
-			}
-		}
+		n_vhr,
 	);
 
-	let n_tx = tx.clone();
-	let n_rx = rx.clone();
-	let n_vhr = vhr;
+	let n_vhr = vhr.clone();
 	handler.add_global_event(
 		CoreEvent::ClientDisconnect.into(),
-		move |ctx| {
-			if try_read_poison(&n_rx, &n_tx) {
-				Some(Event::Cancel)
-			} else if let EventContext::ClientDisconnect(s) = ctx {
-				if let Some(guard) = n_vhr.user_map.remove_take(&s.user_id.0) {
-					let (k, v) = guard.pair();
-					if let Some(guard) = n_vhr.sessions.remove_take(v) {
-						let (ssrc, sess) = guard.pair();
-						finalise_audio_session(sess.clone());
-					}
-				}
-
-				None
-			} else {
-				None
-			}
-		}
+		n_vhr,
 	);
 
-	let n_tx = tx.clone();
-	let n_rx = rx;
 	handler.add_global_event(
 		CoreEvent::SpeakingUpdate.into(),
-		move |ctx| {
-			if try_read_poison(&n_rx, &n_tx) {
-				Some(Event::Cancel)
-			} else if let EventContext::SpeakingUpdate{..} = ctx {
-				None
-			} else {
-				None
-			}
-		}
+		vhr,
 	);
 
-	tx
+	out_tx
 }

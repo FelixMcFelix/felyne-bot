@@ -2,11 +2,9 @@ use crate::{
 	dbs::*,
 	constants::*,
 	Db,
-	TokioHandle,
 };
 use dashmap::DashMap;
 use log::*;
-use parking_lot::RwLock;
 use rand::random;
 use serenity::{
 	client::*,
@@ -15,7 +13,6 @@ use serenity::{
 	utils::*,
 };
 use sqlx::{
-	executor::RefExecutor,
 	prelude::*,
 	sqlite::SqliteRow,
 	Error as SqlError,
@@ -26,6 +23,7 @@ use std::{
 	sync::Arc,
 	thread,
 };
+use tokio::sync::RwLock;
 use tokio::task;
 
 type Space = (String, Arc<Mutex<Option<Vec<u8>>>>);
@@ -47,10 +45,10 @@ impl AttachmentHolder {
 			let inner_obj = obj.clone();
 			let name = a.filename.clone();
 
-			thread::spawn(move || {
-				match a.download() {
+			tokio::spawn(async move {
+				match a.download().await {
 					Ok(val) => {
-						let mut store_space = inner_obj.lock();
+						let mut store_space = inner_obj.lock().await;
 						*store_space = Some(val);
 					},
 					Err(e) => warn!("Couldn't download attachment {}: {:?}", a.filename, e),
@@ -148,8 +146,8 @@ pub enum WatchcatCommand {
 	BufferMsg(Box<Message>),
 }
 
-pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
-	let mut datas = ctx.data.read();
+pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
+	let datas = ctx.data.read().await;
 	let top_dog_holder = datas.get::<DeleteWatchcat>()
 		.unwrap();
 
@@ -158,82 +156,47 @@ pub fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 	}
 
 	let db = datas.get::<Db>().expect("DB conn installed...");
-	let handle = datas.get::<TokioHandle>().expect("Handle installed...");
 
 	if let SetChannel(_) = cmd {
 		
-	} else if let Ok(chan) = handle.block_on(select_watchcat(&db, guild_id)) {
-		top_dog_holder.update(&guild_id, |_k, top_do| {
-			let mut top_dog = top_do.write();
-			top_dog.output_channel = Some(ChannelId(chan));
-			top_do.clone()
-		});
+	} else if let Ok(chan) = select_watchcat(&db.read, guild_id).await {
+		let top_do = top_dog_holder.get(&guild_id)
+			.expect("Guaranteed to exist by above insertion");
+		let mut top_dog = top_do.write().await;
+		top_dog.output_channel = Some(ChannelId(chan));
 	}
 
 	use crate::WatchcatCommand::*;
 
 	match cmd {
 		SetChannel(chan) => {
-			top_dog_holder.update(&guild_id, |_k, top_do| {
-				let mut top_dog = top_do.write();
-				top_dog.output_channel = Some(chan);
-				top_do.clone()
-			});
+			let top_do = top_dog_holder.get(&guild_id)
+				.expect("Guaranteed to exist by above insertion");
+			let mut top_dog = top_do.write().await;
+			top_dog.output_channel = Some(chan);
 
-			handle.block_on(upsert_watchcat(&db, guild_id, chan));
+			upsert_watchcat(&db.write, guild_id, chan).await;
 		},
 		ReportDelete(event_chan, msgs) => {
-			let top_do = top_dog_holder.get(&guild_id).unwrap();
-			let top_dog = top_do.read();
+			let top_do = top_dog_holder.get(&guild_id)
+				.expect("Guaranteed to exist by above insertion");
+			let top_dog = top_do.read().await;
 			for msg in msgs {
-				report_delete(&top_dog, event_chan, msg, ctx);
+				report_delete(&top_dog, event_chan, msg, ctx).await;
 			}
 		},
 		BufferMsg(mut msg) => {
-			top_dog_holder.update(&guild_id, move |_k, top_do| {
-				let mut m = msg.clone();
-				let attachments = AttachmentHolder::new(&mut m.attachments);
-				let mut top_dog = top_do.write();
-				top_dog.backup.add_and_march((m, attachments));
-				top_do.clone()
-			});
+			let top_do = top_dog_holder.get(&guild_id)
+				.expect("Guaranteed to exist by above insertion");
+			let mut m = msg.clone();
+			let attachments = AttachmentHolder::new(&mut m.attachments);
+			let mut top_dog = top_do.write().await;
+			top_dog.backup.add_and_march((m, attachments));
 		},
 	}
 }
 
-async fn select_watchcat(db: &SqlitePool, guild_id: GuildId) -> Result<u64, SqlError> {
-	let GuildId(t_id) = guild_id;
-
-	// let db = db.acquire().await?;
-
-	sqlx::query("SELECT channel_id FROM del_watchcat WHERE guild_id = ?")
-		.bind(&t_id.to_string())
-		.map(|row: SqliteRow| {
-			let a: &str = row.get(0);
-			a.parse::<u64>()
-				.unwrap()
-			}
-		)
-		.fetch_one(db)
-		.await
-}
-
-async fn upsert_watchcat(db: &SqlitePool, guild_id: GuildId, channel_id: ChannelId) {
-	let GuildId(t_g_id) = guild_id;
-	let ChannelId(t_c_id) = channel_id;
-
-	let query = sqlx::query("INSERT OR REPLACE INTO del_watchcat (guild_id, channel_id) VALUES (?,?);")
-		.bind(&t_g_id.to_string())
-		.bind(&t_c_id.to_string())
-		.execute(db)
-		.await;
-
-	if let Err(e) = query {
-		error!("Nya?! (Couldn't write del_watchcat db updates.){:?}", e);
-	}
-}
-
-fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId, ctx: &Context) {
+async fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId, ctx: &Context) {
 	if let Some(out_channel) = delete_data.output_channel {
 		// Watchdog messages should be removable, if needed!
 		if out_channel == chan {return;}
@@ -263,7 +226,7 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId,
 		let mut attachment_text = String::new();
 
 		if let Some((message, attachments_holder)) = msg_full {
-			content = message.content_safe(&ctx.cache);
+			content = message.content_safe(&ctx.cache).await;
 
 			attachment_text = match attachments_holder.store.len() {
 				0 => String::new(),
@@ -300,14 +263,14 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId,
 					base
 				}
 			})
-		) {
+		).await {
 			Ok(_) => {},
 			Err(e) => {warn!("Issue recording delete: {:?}", e);},
 		}
 
 		if let Some(message) = msg_full {
 			for (i, (name, locked_maybe_file)) in message.1.store.iter().enumerate() {
-				let maybe_file = locked_maybe_file.lock();
+				let maybe_file = locked_maybe_file.lock().await;
 				match *maybe_file {
 					Some(ref val) => {
 						let block = vec![(val.as_slice(), name.as_str())];
@@ -315,13 +278,13 @@ fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId,
 							&ctx.http,
 							block, 
 							|m| m.content(format!("File {}!", i))
-						);
+						).await;
 					},
 					None => {
 						let _ = out_channel.send_message(
 							&ctx.http,
 							|m| m.content(format!("Couldn't recover file {}...", i))
-						);
+						).await;
 					},
 				}
 			}
