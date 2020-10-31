@@ -1,35 +1,21 @@
 use crate::constants::TRACE_DIR;
-use crossbeam::channel::{
-	self,
-	Receiver,
-	Sender,
-	TryRecvError,
-};
+use crossbeam::channel::{self, Receiver, Sender, TryRecvError};
 use dashmap::DashMap;
 use log::*;
-use serde::{
-	Deserialize,
-	Serialize,
-};
+use serde::{Deserialize, Serialize};
 use serenity::async_trait;
-use serenity::voice::{
+use songbird::{
 	events::{CoreEvent, Event, EventContext, EventHandler},
-	Handler,
+	Call,
 };
 use std::{
 	collections::hash_map::HashMap,
-	fs::{
-		self,
-		File,
-	},
+	fs::{self, File},
 	mem,
 	num::NonZeroU16,
 	sync::Arc,
 	thread,
-	time::{
-		UNIX_EPOCH,
-		SystemTime,
-	},
+	time::{SystemTime, UNIX_EPOCH},
 };
 
 type Ssrc = u32;
@@ -46,7 +32,7 @@ pub struct VoiceHuntReceiver {
 impl VoiceHuntReceiver {
 	pub fn new() -> Self {
 		let (tx, rx) = channel::bounded(1);
-		Self { 
+		Self {
 			sessions: Arc::new(Default::default()),
 			user_map: Arc::new(Default::default()),
 			rx,
@@ -55,16 +41,14 @@ impl VoiceHuntReceiver {
 	}
 
 	fn try_read_poison(&self) -> bool {
-	match self.rx.try_recv() {
-		Ok(ReceiverSignal::Poison) | Err(TryRecvError::Disconnected) => {
-			let _ = self.tx.send(ReceiverSignal::Poison);
-			true
-		},
-		Err(TryRecvError::Empty) => {
-			false
-		},
+		match self.rx.try_recv() {
+			Ok(ReceiverSignal::Poison) | Err(TryRecvError::Disconnected) => {
+				let _ = self.tx.send(ReceiverSignal::Poison);
+				true
+			},
+			Err(TryRecvError::Empty) => false,
+		}
 	}
-}
 }
 
 #[async_trait]
@@ -78,13 +62,17 @@ impl EventHandler for VoiceHuntReceiver {
 					if self.sessions.get(&s.ssrc).is_none() {
 						self.sessions.insert(s.ssrc, VoiceHuntSession::new());
 					}
-					if self.user_map.get(&s.user_id.0).is_none() {
-						self.user_map.insert(s.user_id.0, s.ssrc);
+					if self.user_map.get(&s.user_id.unwrap().0).is_none() {
+						self.user_map.insert(s.user_id.unwrap().0, s.ssrc);
 					}
 
 					None
 				},
-				EventContext::VoicePacket {audio, packet, payload_offset} => {
+				EventContext::VoicePacket {
+					audio,
+					packet,
+					payload_offset,
+				} => {
 					println!("RTP");
 					let ssrc = packet.ssrc;
 
@@ -94,13 +82,17 @@ impl EventHandler for VoiceHuntReceiver {
 
 					self.sessions.update(&ssrc, move |ssrc, sess| {
 						let mut n_sess = sess.clone();
-						n_sess.record(packet.timestamp.into(), packet.sequence.into(), packet.payload.len() - payload_offset);
+						n_sess.record(
+							packet.timestamp.into(),
+							packet.sequence.into(),
+							packet.payload.len() - payload_offset,
+						);
 						n_sess
 					});
 
 					None
 				},
-				EventContext::RtcpPacket {..} => {
+				EventContext::RtcpPacket { .. } => {
 					println!("RTCP");
 					None
 				},
@@ -125,9 +117,7 @@ impl EventHandler for VoiceHuntReceiver {
 
 					None
 				},
-				EventContext::SpeakingUpdate{..} => {
-					None
-				},
+				EventContext::SpeakingUpdate { .. } => None,
 				_ => None,
 			}
 		}
@@ -139,11 +129,10 @@ impl Drop for VoiceHuntReceiver {
 		// Easier to do than having a synchro mechanism.
 		// Joining a new channel will cause the old receiver to be dropped.
 		// Similarly, leaving completely eill do the same...
-		self.sessions.iter()
-			.for_each(|guard| {
-				let (_ssrc, sess) = guard.pair();
-				finalise_audio_session(sess.clone())
-			});
+		self.sessions.iter().for_each(|guard| {
+			let (_ssrc, sess) = guard.pair();
+			finalise_audio_session(sess.clone())
+		});
 	}
 }
 
@@ -156,7 +145,7 @@ struct VoicePacketMetadata {
 
 #[derive(Clone, Debug)]
 struct VoiceHuntSession {
-	packets: Vec<VoicePacketMetadata>
+	packets: Vec<VoicePacketMetadata>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -168,23 +157,22 @@ enum PacketChainLink {
 
 impl VoiceHuntSession {
 	fn new() -> Self {
-		Self { 
-			packets: vec![],
-		}
+		Self { packets: vec![] }
 	}
 
 	fn record(&mut self, timestamp: u32, sequence: u16, pkt_size: usize) {
 		let pkt = VoicePacketMetadata {
 			timestamp,
 			sequence,
-			size: NonZeroU16::new(pkt_size as u16)
-				.expect("Minimum body size is 3 bytes."),
+			size: NonZeroU16::new(pkt_size as u16).expect("Minimum body size is 3 bytes."),
 		};
 
 		// rough idea:
 		// if timestamp is at risk of overflow, then finalise the existing
 		// session and start a new one.
-		let last_time = self.packets.last()
+		let last_time = self
+			.packets
+			.last()
 			.map(|x| x.timestamp)
 			.unwrap_or(timestamp);
 		let reduced = timestamp < last_time;
@@ -208,10 +196,11 @@ impl VoiceHuntSession {
 		// overflow until a long, long time in the future.
 		// sorting here is cheaper than maybe inserting (and displacing elements)
 		// every time.
-		self.packets.sort_unstable_by(|a, b|
-			a.timestamp.cmp(&b.timestamp)
+		self.packets.sort_unstable_by(|a, b| {
+			a.timestamp
+				.cmp(&b.timestamp)
 				.then_with(|| a.sequence.cmp(&b.sequence).reverse())
-		);
+		});
 
 		for packet in &self.packets {
 			trace!("Packet with len: {:?}", packet);
@@ -236,7 +225,7 @@ impl VoiceHuntSession {
 
 						if let Some(elem) = iter.next_back() {
 							use PacketChainLink::*;
-							
+
 							*elem = match elem {
 								Missing(x) if *x == packet.sequence => {
 									quit = true;
@@ -262,7 +251,10 @@ impl VoiceHuntSession {
 				if standard_order {
 					while target_sequence != packet.sequence {
 						if dropped_packets == 0 {
-							info!("Expected {:?}, making up for {:?}", packet.sequence, target_sequence);
+							info!(
+								"Expected {:?}, making up for {:?}",
+								packet.sequence, target_sequence
+							);
 						}
 						output.push(PacketChainLink::Missing(target_sequence));
 						target_sequence = target_sequence.wrapping_add(1);
@@ -270,7 +262,12 @@ impl VoiceHuntSession {
 					}
 
 					if dropped_packets != 0 {
-						info!("Pushed {} missing packets from {} to {}.", dropped_packets, pkt_old.sequence.wrapping_add(1), target_sequence);
+						info!(
+							"Pushed {} missing packets from {} to {}.",
+							dropped_packets,
+							pkt_old.sequence.wrapping_add(1),
+							target_sequence
+						);
 					}
 				}
 
@@ -291,10 +288,10 @@ impl VoiceHuntSession {
 			// concat that packet but don't treat it as the most recent.
 			output.push(PacketChainLink::Packet(packet.size));
 			if update {
-				last_packet = Some(*packet);	
+				last_packet = Some(*packet);
 			}
 		}
-		
+
 		let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
 
 		let mut attempt = 0;
@@ -323,44 +320,26 @@ pub enum ReceiverSignal {
 	Poison,
 }
 
-pub fn listen_in(handler: &mut Handler) -> Sender<ReceiverSignal> {
+pub fn listen_in(handler: &mut Call) -> Sender<ReceiverSignal> {
 	let vhr = VoiceHuntReceiver::new();
 	let out_tx = vhr.tx.clone();
 
 	let n_vhr = vhr.clone();
-	handler.add_global_event(
-		CoreEvent::SpeakingStateUpdate.into(),
-		n_vhr,
-	);
+	handler.add_global_event(CoreEvent::SpeakingStateUpdate.into(), n_vhr);
 
 	let n_vhr = vhr.clone();
-	handler.add_global_event(
-		CoreEvent::VoicePacket.into(),
-		n_vhr,
-	);
+	handler.add_global_event(CoreEvent::VoicePacket.into(), n_vhr);
 
 	let n_vhr = vhr.clone();
-	handler.add_global_event(
-		CoreEvent::RtcpPacket.into(),
-		n_vhr,
-	);
+	handler.add_global_event(CoreEvent::RtcpPacket.into(), n_vhr);
 
 	let n_vhr = vhr.clone();
-	handler.add_global_event(
-		CoreEvent::ClientConnect.into(),
-		n_vhr,
-	);
+	handler.add_global_event(CoreEvent::ClientConnect.into(), n_vhr);
 
 	let n_vhr = vhr.clone();
-	handler.add_global_event(
-		CoreEvent::ClientDisconnect.into(),
-		n_vhr,
-	);
+	handler.add_global_event(CoreEvent::ClientDisconnect.into(), n_vhr);
 
-	handler.add_global_event(
-		CoreEvent::SpeakingUpdate.into(),
-		vhr,
-	);
+	handler.add_global_event(CoreEvent::SpeakingUpdate.into(), vhr);
 
 	out_tx
 }

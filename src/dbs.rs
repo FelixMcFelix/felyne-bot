@@ -1,7 +1,5 @@
-use crate::{
-	config::*,
-	server::*,
-};
+use super::DbPools;
+use crate::{config::*, server::*};
 use log::error;
 use serenity::model::prelude::*;
 use sqlx::{
@@ -11,12 +9,12 @@ use sqlx::{
 	Error as SqlError,
 	Sqlite,
 };
-use super::DbPools;
 
 pub type OurPool = SqlitePool;
 
 pub async fn init_db_tables(db: &OurPool) -> Result<(), SqlError> {
-	db.execute("
+	db.execute(
+		"
 PRAGMA synchronous = NORMAL;
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
@@ -85,7 +83,9 @@ role_id TEXT
 );
 
 COMMIT;
-	").await
+	",
+	)
+	.await
 	.map(|_| ())
 }
 
@@ -94,10 +94,7 @@ pub async fn db_conn() -> Result<DbPools, SqlError> {
 	let read = SqlitePool::connect("sqlite:felyne.db").await?;
 	let write = SqlitePool::connect("sqlite:felyne.db").await?;
 
-	Ok(DbPools {
-		read,
-		write,
-	})
+	Ok(DbPools { read, write })
 }
 
 #[inline]
@@ -111,8 +108,7 @@ pub async fn select_watchcat(db: &OurPool, guild_id: GuildId) -> Result<u64, Sql
 		.map(move |row: SqliteRow| {
 			let a: &str = row.get(0);
 			a.parse::<u64>().unwrap()
-			}
-		)
+		})
 }
 
 #[inline]
@@ -120,11 +116,12 @@ pub async fn upsert_watchcat(db: &OurPool, guild_id: GuildId, channel_id: Channe
 	let GuildId(t_g_id) = guild_id;
 	let ChannelId(t_c_id) = channel_id;
 
-	let query = sqlx::query("INSERT OR REPLACE INTO del_watchcat (guild_id, channel_id) VALUES (?,?);")
-		.bind(&t_g_id.to_string())
-		.bind(&t_c_id.to_string())
-		.execute(db)
-		.await;
+	let query =
+		sqlx::query("INSERT OR REPLACE INTO del_watchcat (guild_id, channel_id) VALUES (?,?);")
+			.bind(&t_g_id.to_string())
+			.bind(&t_c_id.to_string())
+			.execute(db)
+			.await;
 
 	if let Err(e) = query {
 		error!("Nya?! (Couldn't write del_watchcat db updates.){:?}", e);
@@ -149,14 +146,19 @@ pub async fn select_prefix(db: &OurPool, guild_id: GuildId) -> Result<String, Sq
 pub async fn upsert_prefix(db: &OurPool, guild_id: GuildId, prefix: &str) {
 	let GuildId(t_g_id) = guild_id;
 
-	let query = sqlx::query("INSERT OR REPLACE INTO guild_prefix_override (guild_id, prefix) VALUES (?,?);")
-		.bind(&t_g_id.to_string())
-		.bind(&prefix)
-		.execute(db)
-		.await;
+	let query = sqlx::query(
+		"INSERT OR REPLACE INTO guild_prefix_override (guild_id, prefix) VALUES (?,?);",
+	)
+	.bind(&t_g_id.to_string())
+	.bind(&prefix)
+	.execute(db)
+	.await;
 
 	if let Err(e) = query {
-		error!("Nya?! (Couldn't write guild_prefix_override db updates.){:?}", e);
+		error!(
+			"Nya?! (Couldn't write guild_prefix_override db updates.){:?}",
+			e
+		);
 	}
 }
 
@@ -169,8 +171,7 @@ pub async fn select_optout(db: &OurPool, user_id: UserId) -> Result<UserId, SqlE
 		.map(move |row: SqliteRow| {
 			let a: &str = row.get(0);
 			UserId(a.parse::<u64>().unwrap())
-			}
-		)
+		})
 }
 
 #[inline]
@@ -216,12 +217,13 @@ pub async fn select_control_cfg(db: &OurPool, guild_id: GuildId) -> Result<Contr
 
 #[inline]
 pub async fn upsert_control_cfg(db: &OurPool, guild_id: GuildId, mode: Control) {
-	let query = sqlx::query("INSERT OR REPLACE INTO control_config (guild_id, mode, role) VALUES (?,?,?);")
-		.bind(guild_id.0.to_string())
-		.bind(mode.to_val())
-		.bind(mode.to_role())
-		.execute(db)
-		.await;
+	let query =
+		sqlx::query("INSERT OR REPLACE INTO control_config (guild_id, mode, role) VALUES (?,?,?);")
+			.bind(guild_id.0.to_string())
+			.bind(mode.to_val())
+			.bind(mode.to_role())
+			.execute(db)
+			.await;
 
 	if let Err(e) = query {
 		error!("Nya?! (Couldn't write control_config db updates.){:?}", e);
@@ -229,7 +231,10 @@ pub async fn upsert_control_cfg(db: &OurPool, guild_id: GuildId, mode: Control) 
 }
 
 #[inline]
-pub async fn select_control_admin_cfg(db: &OurPool, guild_id: GuildId) -> Result<Control, SqlError> {
+pub async fn select_control_admin_cfg(
+	db: &OurPool,
+	guild_id: GuildId,
+) -> Result<Control, SqlError> {
 	sqlx::query_as("SELECT mode, role FROM control_admin_config WHERE guild_id = ?")
 		.bind(guild_id.0.to_string())
 		.fetch_one(db)
@@ -238,15 +243,20 @@ pub async fn select_control_admin_cfg(db: &OurPool, guild_id: GuildId) -> Result
 
 #[inline]
 pub async fn upsert_control_admin_cfg(db: &OurPool, guild_id: GuildId, mode: Control) {
-	let query = sqlx::query("INSERT OR REPLACE INTO control_admin_config (guild_id, mode, role) VALUES (?,?,?);")
-		.bind(guild_id.0.to_string())
-		.bind(mode.to_val())
-		.bind(mode.to_role())
-		.execute(db)
-		.await;
+	let query = sqlx::query(
+		"INSERT OR REPLACE INTO control_admin_config (guild_id, mode, role) VALUES (?,?,?);",
+	)
+	.bind(guild_id.0.to_string())
+	.bind(mode.to_val())
+	.bind(mode.to_role())
+	.execute(db)
+	.await;
 
 	if let Err(e) = query {
-		error!("Nya?! (Couldn't write control_admin_config db updates.){:?}", e);
+		error!(
+			"Nya?! (Couldn't write control_admin_config db updates.){:?}",
+			e
+		);
 	}
 }
 
@@ -260,12 +270,13 @@ pub async fn select_opt_in_out(db: &OurPool, guild_id: GuildId) -> Result<OptInO
 
 #[inline]
 pub async fn upsert_opt_in_out(db: &OurPool, guild_id: GuildId, mode: OptInOut) {
-	let query = sqlx::query("INSERT OR REPLACE INTO opt_in_out (guild_id, mode, role) VALUES (?,?,?);")
-		.bind(guild_id.0.to_string())
-		.bind(mode.to_val())
-		.bind(mode.to_role())
-		.execute(db)
-		.await;
+	let query =
+		sqlx::query("INSERT OR REPLACE INTO opt_in_out (guild_id, mode, role) VALUES (?,?,?);")
+			.bind(guild_id.0.to_string())
+			.bind(mode.to_val())
+			.bind(mode.to_role())
+			.execute(db)
+			.await;
 
 	if let Err(e) = query {
 		error!("Nya?! (Couldn't write opt_in_out db updates.){:?}", e);

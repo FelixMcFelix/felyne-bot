@@ -1,14 +1,9 @@
-use rand::{
-	distributions::*,
-};
+use rand::distributions::*;
 use std::{
 	cmp::Eq,
 	collections::HashMap,
 	hash::Hash,
-	time::{
-		Duration,
-		Instant,
-	},
+	time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug)]
@@ -53,7 +48,8 @@ pub struct Transition<State: Copy> {
 impl<State: Copy> Transition<State> {
 	fn cooldown(&mut self, data: &Option<Cooldown>) {
 		self.last_used = Instant::now();
-		self.cooldown = data.as_ref()
+		self.cooldown = data
+			.as_ref()
 			.or_else(|| self.cooldown_data.as_ref())
 			.map(Cooldown::draw);
 	}
@@ -98,15 +94,16 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 	}
 
 	pub fn advance(&mut self, token: Alphabet) -> Option<State> {
-		let tx = self.transitions.get_mut(&self.state)
+		let tx = self
+			.transitions
+			.get_mut(&self.state)
 			.and_then(move |token_map| token_map.get_mut(&token))
-			.and_then(|tx_list|
-				tx_list.iter_mut()
-					.rfind(|tx| match tx.cooldown {
-						Some(cd) => tx.last_used.elapsed() > cd,
-						_ => true,
-					})
-			);
+			.and_then(|tx_list| {
+				tx_list.iter_mut().rfind(|tx| match tx.cooldown {
+					Some(cd) => tx.last_used.elapsed() > cd,
+					_ => true,
+				})
+			});
 
 		if let Some(tx) = tx {
 			tx.cooldown(&None);
@@ -118,8 +115,17 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 		}
 	}
 
-	pub fn cause_cooldown(&mut self, from: State, to: State, on: Alphabet, prio: usize, data: Option<Cooldown>) {
-		let tx_list = self.transitions.get_mut(&from)
+	pub fn cause_cooldown(
+		&mut self,
+		from: State,
+		to: State,
+		on: Alphabet,
+		prio: usize,
+		data: Option<Cooldown>,
+	) {
+		let tx_list = self
+			.transitions
+			.get_mut(&from)
 			.and_then(move |token_map| token_map.get_mut(&on));
 
 		if let Some(tx_list) = tx_list {
@@ -132,9 +138,7 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 	}
 
 	pub fn register_state(&mut self, state: State) -> &mut Self {
-		self.transitions
-			.entry(state)
-			.or_insert_with(HashMap::new);
+		self.transitions.entry(state).or_insert_with(HashMap::new);
 		self
 	}
 
@@ -151,26 +155,22 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 	}
 
 	pub fn add_priority_transition(
-			&mut self,
-			from: State, to: State, on: Alphabet,
-			priority: usize, cooldown_data: Option<Cooldown>
-			) -> &mut Self {
-		let alpha_set = self.transitions
-			.entry(from)
-			.or_insert_with(HashMap::new);
-		let tx_list = alpha_set
-			.entry(on)
-			.or_insert_with(Vec::new);
+		&mut self,
+		from: State,
+		to: State,
+		on: Alphabet,
+		priority: usize,
+		cooldown_data: Option<Cooldown>,
+	) -> &mut Self {
+		let alpha_set = self.transitions.entry(from).or_insert_with(HashMap::new);
+		let tx_list = alpha_set.entry(on).or_insert_with(Vec::new);
 
 		// existing transitions with same priority are overridden.
 		let pos = tx_list.binary_search_by_key(&priority, |el| el.priority);
-		let cooldown = cooldown_data.as_ref()
-			.and_then(|cd|
-				if cd.start_used {
-					Some(cd.draw())
-				} else {
-					None
-				});
+		let cooldown =
+			cooldown_data
+				.as_ref()
+				.and_then(|cd| if cd.start_used { Some(cd.draw()) } else { None });
 		let tx = Transition {
 			destination: to,
 			priority,
@@ -188,7 +188,7 @@ impl<State: Hash + Eq + Copy, Alphabet: Hash + Eq + Copy> TimedMachine<State, Al
 		self
 	}
 
-	pub fn refresh(&mut self) -> &mut Self{
+	pub fn refresh(&mut self) -> &mut Self {
 		self.state = self.start;
 
 		for (_start, token_map) in self.transitions.iter_mut() {
@@ -221,12 +221,16 @@ mod test {
 
 	#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 	enum TestState {
-		A, B, C,
+		A,
+		B,
+		C,
 	}
 
 	#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 	enum TestAlpha {
-		A, B, C,
+		A,
+		B,
+		C,
 	}
 
 	#[test]
@@ -256,18 +260,19 @@ mod test {
 	#[test]
 	fn test_tx_multi() {
 		let mut machine = TimedMachine::new(TestState::A);
-		machine.add_transition(TestState::A, TestState::A, TestAlpha::A)
+		machine
+			.add_transition(TestState::A, TestState::A, TestAlpha::A)
 			.add_transition(TestState::A, TestState::B, TestAlpha::B)
 			.add_transition(TestState::A, TestState::C, TestAlpha::C);
 
 		assert_eq!(machine.advance(TestAlpha::C), Some(TestState::C));
 	}
 
-
 	#[test]
 	fn test_tx_priority() {
 		let mut machine = TimedMachine::new(TestState::A);
-		machine.add_transition(TestState::A, TestState::B, TestAlpha::A)
+		machine
+			.add_transition(TestState::A, TestState::B, TestAlpha::A)
 			.add_priority_transition(TestState::A, TestState::C, TestAlpha::A, 1, None);
 
 		assert_eq!(machine.advance(TestAlpha::A), Some(TestState::C));
@@ -278,7 +283,8 @@ mod test {
 		let mut machine = TimedMachine::new(TestState::A);
 		let cd = Cooldown::new(Duration::from_secs(200).into(), false, false);
 
-		machine.add_transition(TestState::A, TestState::B, TestAlpha::A)
+		machine
+			.add_transition(TestState::A, TestState::B, TestAlpha::A)
 			.add_priority_transition(TestState::A, TestState::C, TestAlpha::A, 1, Some(cd))
 			.add_transition(TestState::C, TestState::A, TestAlpha::A);
 
@@ -292,8 +298,7 @@ mod test {
 		let mut machine = TimedMachine::new(TestState::A);
 		let cd = Cooldown::new(Duration::from_secs(200).into(), true, true);
 
-		machine
-			.add_priority_transition(TestState::A, TestState::B, TestAlpha::A, 0, Some(cd));
+		machine.add_priority_transition(TestState::A, TestState::B, TestAlpha::A, 0, Some(cd));
 
 		assert_eq!(machine.advance(TestAlpha::A), None);
 	}
@@ -330,7 +335,8 @@ mod test {
 	fn test_refresh_goes_to_original_state() {
 		let mut machine = TimedMachine::new(TestState::A);
 
-		machine.add_transition(TestState::A, TestState::B, TestAlpha::A)
+		machine
+			.add_transition(TestState::A, TestState::B, TestAlpha::A)
 			.advance(TestAlpha::A);
 
 		assert_eq!(machine.refresh().state(), TestState::A);
@@ -340,11 +346,13 @@ mod test {
 	fn test_tx_prob_cooldown() {
 		let mut machine = TimedMachine::new(TestState::A);
 		let cd = Cooldown::new(
-			Uniform::new(Duration::from_secs(100),Duration::from_secs(200)).into(),
+			Uniform::new(Duration::from_secs(100), Duration::from_secs(200)).into(),
 			false,
-			false);
+			false,
+		);
 
-		machine.add_transition(TestState::A, TestState::B, TestAlpha::A)
+		machine
+			.add_transition(TestState::A, TestState::B, TestAlpha::A)
 			.add_priority_transition(TestState::A, TestState::C, TestAlpha::A, 1, Some(cd))
 			.add_transition(TestState::C, TestState::A, TestAlpha::A);
 

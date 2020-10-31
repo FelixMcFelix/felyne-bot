@@ -1,28 +1,10 @@
-use crate::{
-	dbs::*,
-	constants::*,
-	Db,
-};
+use crate::{constants::*, dbs::*, Db};
 use dashmap::DashMap;
 use log::*;
 use rand::random;
-use serenity::{
-	client::*,
-	model::prelude::*,
-	prelude::*,
-	utils::*,
-};
-use sqlx::{
-	prelude::*,
-	sqlite::SqliteRow,
-	Error as SqlError,
-	SqlitePool,
-};
-use std::{
-	collections::HashMap,
-	sync::Arc,
-	thread,
-};
+use serenity::{client::*, model::prelude::*, prelude::*, utils::*};
+use sqlx::{prelude::*, sqlite::SqliteRow, Error as SqlError, SqlitePool};
+use std::{collections::HashMap, sync::Arc, thread};
 use tokio::sync::RwLock;
 use tokio::task;
 
@@ -58,9 +40,7 @@ impl AttachmentHolder {
 			store.push((name, obj));
 		}
 
-		AttachmentHolder {
-			store
-		}
+		AttachmentHolder { store }
 	}
 }
 
@@ -70,7 +50,7 @@ pub struct CircQueue<T> {
 	len: usize,
 }
 
-impl <T:Clone> CircQueue<T> {
+impl<T: Clone> CircQueue<T> {
 	fn new(size: usize) -> Self {
 		CircQueue {
 			data: vec![None; size].into_boxed_slice(),
@@ -86,7 +66,7 @@ impl <T:Clone> CircQueue<T> {
 			self.len += 1;
 		}
 
-		self.data[wrap(self.base, self.len-1, &self.data)] = Some(element);
+		self.data[wrap(self.base, self.len - 1, &self.data)] = Some(element);
 	}
 
 	fn head(&self) -> &Option<T> {
@@ -94,7 +74,7 @@ impl <T:Clone> CircQueue<T> {
 	}
 
 	fn tail(&self) -> &Option<T> {
-		&self.data[wrap(self.base, self.data.len().max(1)-1, &self.data)]
+		&self.data[wrap(self.base, self.data.len().max(1) - 1, &self.data)]
 	}
 
 	fn get(&self, index: usize) -> &Option<T> {
@@ -118,7 +98,9 @@ impl <T:Clone> CircQueue<T> {
 }
 
 #[inline]
-fn wrap<T>(position: usize, increment: usize, buf: &[T]) -> usize {(position + increment) % buf.len()}
+fn wrap<T>(position: usize, increment: usize, buf: &[T]) -> usize {
+	(position + increment) % buf.len()
+}
 
 pub struct GuildDeleteData {
 	output_channel: Option<ChannelId>,
@@ -127,7 +109,7 @@ pub struct GuildDeleteData {
 
 impl GuildDeleteData {
 	fn new(output_channel: Option<ChannelId>) -> Self {
-		GuildDeleteData{
+		GuildDeleteData {
 			output_channel,
 			backup: CircQueue::new(BACKUP_SIZE),
 		}
@@ -148,8 +130,7 @@ pub enum WatchcatCommand {
 
 pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 	let datas = ctx.data.read().await;
-	let top_dog_holder = datas.get::<DeleteWatchcat>()
-		.unwrap();
+	let top_dog_holder = datas.get::<DeleteWatchcat>().unwrap();
 
 	if !top_dog_holder.contains_key(&guild_id) {
 		top_dog_holder.insert(guild_id, Arc::new(RwLock::new(GuildDeleteData::new(None))));
@@ -158,9 +139,9 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
 	if let SetChannel(_) = cmd {
-		
 	} else if let Ok(chan) = select_watchcat(&db.read, guild_id).await {
-		let top_do = top_dog_holder.get(&guild_id)
+		let top_do = top_dog_holder
+			.get(&guild_id)
 			.expect("Guaranteed to exist by above insertion");
 		let mut top_dog = top_do.write().await;
 		top_dog.output_channel = Some(ChannelId(chan));
@@ -170,7 +151,8 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 
 	match cmd {
 		SetChannel(chan) => {
-			let top_do = top_dog_holder.get(&guild_id)
+			let top_do = top_dog_holder
+				.get(&guild_id)
 				.expect("Guaranteed to exist by above insertion");
 			let mut top_dog = top_do.write().await;
 			top_dog.output_channel = Some(chan);
@@ -178,7 +160,8 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 			upsert_watchcat(&db.write, guild_id, chan).await;
 		},
 		ReportDelete(event_chan, msgs) => {
-			let top_do = top_dog_holder.get(&guild_id)
+			let top_do = top_dog_holder
+				.get(&guild_id)
 				.expect("Guaranteed to exist by above insertion");
 			let top_dog = top_do.read().await;
 			for msg in msgs {
@@ -186,7 +169,8 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 			}
 		},
 		BufferMsg(mut msg) => {
-			let top_do = top_dog_holder.get(&guild_id)
+			let top_do = top_dog_holder
+				.get(&guild_id)
 				.expect("Guaranteed to exist by above insertion");
 			let mut m = msg.clone();
 			let attachments = AttachmentHolder::new(&mut m.attachments);
@@ -196,10 +180,17 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 	}
 }
 
-async fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: MessageId, ctx: &Context) {
+async fn report_delete(
+	delete_data: &GuildDeleteData,
+	chan: ChannelId,
+	msg: MessageId,
+	ctx: &Context,
+) {
 	if let Some(out_channel) = delete_data.output_channel {
 		// Watchdog messages should be removable, if needed!
-		if out_channel == chan {return;}
+		if out_channel == chan {
+			return;
+		}
 		// Try to find it!
 		let msgs = &delete_data.backup;
 		let len = delete_data.backup.len;
@@ -209,15 +200,14 @@ async fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: Mess
 		while curr < len {
 			let s = msgs.get(curr);
 			match s {
-				Some(ref message) => {
+				Some(ref message) =>
 					if message.0.id == msg {
 						msg_full = Some(message);
-					}
-				},
+					},
 				None => info!("{}: None", curr),
 			}
 			curr += 1;
-		};
+		}
 
 		let mut content = String::from("Hiss... (I couldn't find what it was?!)");
 		let mut author_img = String::new();
@@ -230,7 +220,11 @@ async fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: Mess
 
 			attachment_text = match attachments_holder.store.len() {
 				0 => String::new(),
-				n => format!("{} attachment{}! I'm digging them up---wait patiently, nya!", n, if n > 1 {"s"} else {""}),
+				n => format!(
+					"{} attachment{}! I'm digging them up---wait patiently, nya!",
+					n,
+					if n > 1 { "s" } else { "" }
+				),
 			};
 
 			let author = &message.author;
@@ -238,34 +232,40 @@ async fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: Mess
 			author_mention = author.mention();
 			author_img = author.face();
 		}
-		
-		match out_channel.send_message(&ctx.http, |m| m
-			.embed(|e| {
-				let base = e.colour(Colour::from_rgb(236, 98, 0))
-				.author(|a| a
-					.name(author_name.as_str())
-					.icon_url(author_img.as_str()))
-				.description(
-					format!("**Grraow?! (Myessage by {} in {} stolen!)**\n{}",
-						author_mention,
-						chan.mention(),
-						content))
-				.footer(|f| f
-					.text(format!("ID: {}. Nyarowr... (I think that {} has it...)", msg, MONSTERS[random::<usize>()%MONSTERS.len()])));
 
-				if !attachment_text.is_empty() {
-					base.field(
-						"I think they dropped something!",
-						attachment_text,
-						true
-					)
-				} else {
-					base
-				}
+		match out_channel
+			.send_message(&ctx.http, |m| {
+				m.embed(|e| {
+					let base = e
+						.colour(Colour::from_rgb(236, 98, 0))
+						.author(|a| a.name(author_name.as_str()).icon_url(author_img.as_str()))
+						.description(format!(
+							"**Grraow?! (Myessage by {} in {} stolen!)**\n{}",
+							author_mention,
+							chan.mention(),
+							content
+						))
+						.footer(|f| {
+							f.text(format!(
+								"ID: {}. Nyarowr... (I think that {} has it...)",
+								msg,
+								MONSTERS[random::<usize>() % MONSTERS.len()]
+							))
+						});
+
+					if !attachment_text.is_empty() {
+						base.field("I think they dropped something!", attachment_text, true)
+					} else {
+						base
+					}
+				})
 			})
-		).await {
+			.await
+		{
 			Ok(_) => {},
-			Err(e) => {warn!("Issue recording delete: {:?}", e);},
+			Err(e) => {
+				warn!("Issue recording delete: {:?}", e);
+			},
 		}
 
 		if let Some(message) = msg_full {
@@ -274,17 +274,16 @@ async fn report_delete(delete_data: &GuildDeleteData, chan: ChannelId, msg: Mess
 				match *maybe_file {
 					Some(ref val) => {
 						let block = vec![(val.as_slice(), name.as_str())];
-						let _ = out_channel.send_files(
-							&ctx.http,
-							block, 
-							|m| m.content(format!("File {}!", i))
-						).await;
+						let _ = out_channel
+							.send_files(&ctx.http, block, |m| m.content(format!("File {}!", i)))
+							.await;
 					},
 					None => {
-						let _ = out_channel.send_message(
-							&ctx.http,
-							|m| m.content(format!("Couldn't recover file {}...", i))
-						).await;
+						let _ = out_channel
+							.send_message(&ctx.http, |m| {
+								m.content(format!("Couldn't recover file {}...", i))
+							})
+							.await;
 					},
 				}
 			}

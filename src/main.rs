@@ -6,34 +6,22 @@ mod server;
 mod voicehunt;
 mod watchcat;
 
-use core::future::Future;
 use crate::{
-	config::{
-		ConfigParseError,
-		Control as CfgControl,
-		ControlMode,
-	},
-	dbs::*,
-	watchcat::*,
+	config::{ConfigParseError, Control as CfgControl, ControlMode},
 	constants::*,
+	dbs::*,
 	voicehunt::*,
+	watchcat::*,
 };
+use core::future::Future;
 use dashmap::DashMap;
 use futures::future::FutureExt;
 use log::*;
 use serenity::{
 	async_trait,
-	client::{
-		*,
-		bridge::voice::ClientVoiceManager,
-	},
+	client::*,
 	framework::standard::{
-		macros::{
-			check,
-			command,
-			group,
-			help,
-		},
+		macros::{check, command, group, help},
 		Args,
 		Check,
 		CheckResult,
@@ -46,25 +34,22 @@ use serenity::{
 	http::client::Http,
 	model::prelude::*,
 	prelude::*,
-	Result as SResult,
 	utils::*,
-	voice::{
-		self,
-		input::{
-			cached::{
-				Compressed,
-				Memory,
-			},
-			Input,
-		},
-		Bitrate,
+	Result as SResult,
+};
+use songbird::{
+	self,
+	input::{
+		cached::{Compressed, Memory},
+		Input,
 	},
+	Bitrate,
+	SerenityInit,
 };
-use sqlx::{
-	sqlite::SqlitePool,
-};
+use sqlx::sqlite::SqlitePool;
 use std::{
 	collections::{HashMap, HashSet},
+	convert::TryInto,
 	env,
 	fs::File,
 	io::prelude::*,
@@ -88,12 +73,6 @@ struct DbPools {
 	write: SqlitePool,
 }
 
-struct VoiceManager;
-
-impl TypeMapKey for VoiceManager {
-	type Value = Arc<Mutex<ClientVoiceManager>>;
-}
-
 struct Resources;
 
 type RxMap = Arc<DashMap<&'static str, CachedSound>>;
@@ -114,7 +93,7 @@ impl From<&CachedSound> for Input {
 			Compressed(c) => c.new_handle()
 				// .expect("Opus errors on decoder creation are rare if we're copying valid settings.")
 				.into(),
-			Uncompressed(u) => u.new_handle().into(),
+			Uncompressed(u) => u.new_handle().try_into().unwrap(),
 		}
 	}
 }
@@ -133,15 +112,13 @@ impl EventHandler for FelyneEvts {
 				return;
 			},
 		};
-		
+
 		watchcat(&ctx, guild_id, WatchcatCommand::BufferMsg(Box::new(msg))).await;
 	}
 
 	async fn message_delete(&self, ctx: Context, chan: ChannelId, msg: MessageId) {
 		// Get the guild ID.
-		let guild = chan.to_channel(&ctx)
-			.await
-			.map(Channel::guild);
+		let guild = chan.to_channel(&ctx).await.map(Channel::guild);
 
 		let guild_id = match guild {
 			Ok(Some(c)) => c.guild_id,
@@ -149,15 +126,18 @@ impl EventHandler for FelyneEvts {
 				return;
 			},
 		};
-		
-		watchcat(&ctx, guild_id, WatchcatCommand::ReportDelete(chan, vec![msg])).await;
+
+		watchcat(
+			&ctx,
+			guild_id,
+			WatchcatCommand::ReportDelete(chan, vec![msg]),
+		)
+		.await;
 	}
 
 	async fn message_delete_bulk(&self, ctx: Context, chan: ChannelId, msgs: Vec<MessageId>) {
 		// Get the guild ID.
-		let guild = chan.to_channel(&ctx)
-			.await
-			.map(Channel::guild);
+		let guild = chan.to_channel(&ctx).await.map(Channel::guild);
 
 		let guild_id = match guild {
 			Ok(Some(c)) => c.guild_id,
@@ -174,14 +154,21 @@ impl EventHandler for FelyneEvts {
 		voicehunt_complete_update(&ctx, guild.id, guild.voice_states).await;
 	}
 
-	async fn voice_state_update(&self, ctx: Context, maybe_guild: Option<GuildId>, _old_vox: Option<VoiceState>, vox: VoiceState) {
+	async fn voice_state_update(
+		&self,
+		ctx: Context,
+		maybe_guild: Option<GuildId>,
+		_old_vox: Option<VoiceState>,
+		vox: VoiceState,
+	) {
 		if let Some(guild_id) = maybe_guild {
-			voicehunt_update(&ctx, guild_id, vox).await;	
+			voicehunt_update(&ctx, guild_id, vox).await;
 		}
 	}
 
 	async fn ready(&self, ctx: Context, _rdy: Ready) {
-		ctx.set_activity(Activity::listening("scary monsters!")).await;
+		ctx.set_activity(Activity::listening("scary monsters!"))
+			.await;
 	}
 }
 
@@ -210,8 +197,7 @@ async fn main() {
 
 	let token_raw = token.as_str().trim();
 
-	validate_token(&token_raw)
-		.expect("Naa nya! (Token invalid!)");
+	validate_token(&token_raw).expect("Naa nya! (Token invalid!)");
 
 	// Init the Database
 	let mut db = match db_conn().await {
@@ -219,7 +205,7 @@ async fn main() {
 		Err(e) => {
 			error!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
 			return;
-		}
+		},
 	};
 
 	// Try and build tables, if we don't have them.
@@ -246,7 +232,8 @@ async fn main() {
 
 	// Establish the bot's config, register all our commands...
 	let framework = StandardFramework::new()
-        .configure(|c| c
+		.configure(|c| {
+			c
 			// .prefix("!")
 			.dynamic_prefix(|ctx, msg| { Box::pin(async move {
 				let datas = ctx.data.read().await;
@@ -259,21 +246,22 @@ async fn main() {
 			})})
 			.on_mention(Some(bot_id))
 			.owners(move_owners)
-			.case_insensitivity(true))
+			.case_insensitivity(true)
+		})
 		.group(&PUBLIC_GROUP)
 		.group(&CONTROL_GROUP)
 		.group(&ADMIN_GROUP);
 
-	let mut client = Client::new(&token)
-        .event_handler(FelyneEvts)
-        .framework(framework)
-        .await
-        .expect("Err creating client");
+	let mut client = Client::builder(&token)
+		.event_handler(FelyneEvts)
+		.framework(framework)
+		.register_songbird()
+		.await
+		.expect("Err creating client");
 
 	// Okay, copy the client's voice manager into its data area so that commands can see it.
 	{
 		let mut data = client.data.write().await;
-		data.insert::<VoiceManager>(Arc::clone(&client.voice_manager));
 		data.insert::<DeleteWatchcat>(DashMap::new());
 		data.insert::<VoiceHunt>(HashMap::new());
 
@@ -286,9 +274,9 @@ async fn main() {
 		// println!("A");
 		add_resources(&resources, "bgm", BBQ_RESULT, false).await;
 		add_resources(&resources, "bgm", SLEEP, false).await;
-		add_resources(&resources, "bgm", START, true).await;
-		add_resources(&resources, "bgm", AMBIENCE, true).await;
-		add_resources(&resources, "bgm", BGM, true).await;
+		add_resources(&resources, "bgm", START, false).await;
+		add_resources(&resources, "bgm", AMBIENCE, false).await;
+		add_resources(&resources, "bgm", BGM, false).await;
 
 		add_resources(&resources, "sfx", SFX, false).await;
 		add_resources(&resources, "sfx", BONUS_SFX, false).await;
@@ -307,20 +295,21 @@ async fn main() {
 async fn add_resources<'a>(
 	rx: &'a DashMap<&'static str, CachedSound>,
 	folder: &'static str,
-	files: &'static[&'static str],
+	files: &'static [&'static str],
 	compress: bool,
 ) {
 	for file_id in files {
 		let file_name = format!("{}/{}", folder, file_id);
-		let base = voice::ffmpeg(&file_name).await.expect("File should be in root folder.");
+		let base = songbird::ffmpeg(&file_name)
+			.await
+			.expect("File should be in root folder.");
 		let file = if compress {
 			let src = Compressed::new(base, Bitrate::BitsPerSecond(128_000))
 				.expect("Apparent critical failure to make file...");
 			let _ = src.raw.spawn_loader();
 			CachedSound::Compressed(src)
 		} else {
-			let src = Memory::new(base)
-				.expect("Apparent critical failure to make file...");
+			let src = Memory::new(base).expect("Apparent critical failure to make file...");
 			let _ = src.raw.spawn_loader();
 			CachedSound::Uncompressed(src)
 		};
@@ -330,17 +319,26 @@ async fn add_resources<'a>(
 
 #[check]
 #[name = "Control"]
-async fn can_control_cat(ctx: &Context, msg: &Message, args: &mut Args, opts: &CommandOptions) -> CheckResult {
+async fn can_control_cat(
+	ctx: &Context,
+	msg: &Message,
+	args: &mut Args,
+	opts: &CommandOptions,
+) -> CheckResult {
 	let g_id = match msg.guild_id {
 		Some(id) => id,
-		_ => return CheckResult::new_user("Control commands only valid in guild channel (i.e., not DMs)."),
+		_ =>
+			return CheckResult::new_user(
+				"Control commands only valid in guild channel (i.e., not DMs).",
+			),
 	};
 
 	let datas = ctx.data.read().await;
 
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
-	let ctl = select_control_cfg(&db.read, g_id).await
+	let ctl = select_control_cfg(&db.read, g_id)
+		.await
 		.ok()
 		.unwrap_or_default();
 
@@ -351,7 +349,7 @@ async fn can_control_cat(ctx: &Context, msg: &Message, args: &mut Args, opts: &C
 		a => match can_admin_cat(ctx, msg, args, opts).await {
 			CheckResult::Success => CheckResult::Success,
 			a => a,
-		}
+		},
 	};
 	println!("{:?}", o);
 	o
@@ -359,17 +357,26 @@ async fn can_control_cat(ctx: &Context, msg: &Message, args: &mut Args, opts: &C
 
 #[check]
 #[name = "Admin"]
-async fn can_admin_cat(ctx: &Context, msg: &Message, args: &mut Args, opts: &CommandOptions) -> CheckResult {
+async fn can_admin_cat(
+	ctx: &Context,
+	msg: &Message,
+	args: &mut Args,
+	opts: &CommandOptions,
+) -> CheckResult {
 	let g_id = match msg.guild_id {
 		Some(id) => id,
-		_ => return CheckResult::new_user("Control commands only valid in guild channel (i.e., not DMs)."),
+		_ =>
+			return CheckResult::new_user(
+				"Control commands only valid in guild channel (i.e., not DMs).",
+			),
 	};
 
 	let datas = ctx.data.read().await;
 
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
-	let ctl = select_control_admin_cfg(&db.read, g_id).await
+	let ctl = select_control_admin_cfg(&db.read, g_id)
+		.await
 		.ok()
 		.unwrap_or_default();
 
@@ -382,27 +389,29 @@ async fn shared_ctl_check(control: CfgControl, ctx: &Context, msg: &Message) -> 
 	use CfgControl::*;
 
 	(match control {
-		OwnerOnly => {
-			msg.guild(ctx).await
-				.map(|guild| if guild.owner_id == msg.author.id {
-					CheckResult::Success
-				} else {
-					println!("Not a valid person: {:?} vs {:?}", msg.author.id, guild.owner_id);
-					CheckResult::new_user("User is not server/bot owner.")
-				})
-		},
-		WithRole(role) => {
-			msg.member(ctx).await
-				.ok()
-				.map(|member|
-					if member.roles.contains(&role) {
-						CheckResult::Success
-					} else {
-						CheckResult::new_user("User lacks necessary role.")
-					})
-		},
+		OwnerOnly => msg.guild(ctx).await.map(|guild| {
+			if guild.owner_id == msg.author.id {
+				CheckResult::Success
+			} else {
+				println!(
+					"Not a valid person: {:?} vs {:?}",
+					msg.author.id, guild.owner_id
+				);
+				CheckResult::new_user("User is not server/bot owner.")
+			}
+		}),
+		WithRole(role) => msg.member(ctx).await.ok().map(|member| {
+			if member.roles.contains(&role) {
+				CheckResult::Success
+			} else {
+				CheckResult::new_user("User lacks necessary role.")
+			}
+		}),
 		All => Some(CheckResult::Success),
-	}).unwrap_or_else(|| CheckResult::new_user("Checked command occurred outside of a Guild Channel."))
+	})
+	.unwrap_or_else(|| {
+		CheckResult::new_user("Checked command occurred outside of a Guild Channel.")
+	})
 }
 
 #[group]
@@ -440,7 +449,11 @@ async fn log_to(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 
 	watchcat(&ctx, guild_id, WatchcatCommand::SetChannel(out_chan)).await;
 
-	check_msg(msg.channel_id.say(&ctx.http, "Mrowrorr! (I'll keep you nyotified!)").await);
+	check_msg(
+		msg.channel_id
+			.say(&ctx.http, "Mrowrorr! (I'll keep you nyotified!)")
+			.await,
+	);
 
 	Ok(())
 }
@@ -469,7 +482,14 @@ async fn felyne_prefix(ctx: &Context, msg: &Message, mut args: Args) -> CommandR
 
 	upsert_prefix(&db.write, guild_id, &new_prefix).await;
 
-	check_msg(msg.channel_id.say(&ctx.http, format!("Listening to nyew prefix: {}", &new_prefix)).await);
+	check_msg(
+		msg.channel_id
+			.say(
+				&ctx.http,
+				format!("Listening to nyew prefix: {}", &new_prefix),
+			)
+			.await,
+	);
 
 	Ok(())
 }
@@ -487,11 +507,11 @@ async fn ctl_mode(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 }
 
 async fn ctl_mode_basis(
-		ctx: &Context,
-		msg: &Message,
-		mut args: Args,
-		do_for_admin: bool,
-	) -> CommandResult {
+	ctx: &Context,
+	msg: &Message,
+	mut args: Args,
+	do_for_admin: bool,
+) -> CommandResult {
 	match CfgControl::parse(&mut args) {
 		Ok(Some(cm)) => {
 			let mut datas = ctx.data.read().await;
@@ -503,14 +523,26 @@ async fn ctl_mode_basis(
 				} else {
 					upsert_control_cfg(&db.write, g_id, cm).await;
 				}
-				check_msg(msg.channel_id.say(&ctx.http, format!("Now accepting admin commands from: {:?}", &cm)).await);
+				check_msg(
+					msg.channel_id
+						.say(
+							&ctx.http,
+							format!("Now accepting admin commands from: {:?}", &cm),
+						)
+						.await,
+				);
 			}
 
 			// new mode
 		},
 		Ok(None) => {
 			check_msg(
-				msg.channel_id.say(&ctx.http, format!("I support the modes: {:?}", &ControlMode::LabelList)).await
+				msg.channel_id
+					.say(
+						&ctx.http,
+						format!("I support the modes: {:?}", &ControlMode::LabelList),
+					)
+					.await,
 			);
 		},
 		Err(e) => {
@@ -528,7 +560,7 @@ async fn ctl_mode_basis(
 					"Try that command again, with a role mention or ID!"
 				},
 			}).await);
-		}
+		},
 	}
 
 	Ok(())
@@ -553,8 +585,10 @@ async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 				// TODO: make use of string parsing for greeat good.
 				VoiceHuntCommand::DirectedHunt(ChannelId(c))
 			},
-			None => {VoiceHuntCommand::BraveHunt},
-	}).await;
+			None => VoiceHuntCommand::BraveHunt,
+		},
+	)
+	.await;
 
 	check_msg(msg.channel_id.say(&ctx.http, "Mrowr!").await);
 
@@ -572,11 +606,7 @@ async fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	};
 
 	// Turn first arg (hopefully a channel mention) into a real channel
-	voicehunt_control(
-		&ctx,
-		guild,
-		VoiceHuntCommand::Stalk,
-	).await;
+	voicehunt_control(&ctx, guild, VoiceHuntCommand::Stalk).await;
 
 	check_msg(msg.channel_id.say(&ctx.http, "...").await);
 
@@ -613,7 +643,9 @@ async fn volume(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 
 	let vol = match args.single::<f32>().ok() {
 		Some(c) => c,
-		None => {return confused(&ctx, &msg).await;},
+		None => {
+			return confused(&ctx, &msg).await;
+		},
 	};
 
 	if !vol.is_finite() || vol < 0.0 || vol > 2.0 {
@@ -626,7 +658,7 @@ async fn volume(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 }
 
 #[command]
-async fn ids(ctx: &Context, msg: &Message, _args: Args) -> CommandResult { 
+async fn ids(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	let guild = match msg.guild(&ctx.cache).await {
 		Some(c) => c.id,
 		None => {
@@ -639,7 +671,8 @@ async fn ids(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 
 	for channel in guild.channels(&ctx.http).await.unwrap().values() {
 		if channel.kind == ChannelType::Voice {
-			content.push(&channel.name)
+			content
+				.push(&channel.name)
 				.push_bold(" --- ")
 				.push_line(&channel.id);
 		}
@@ -655,8 +688,15 @@ async fn ids(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 #[command]
 async fn github(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// yeah whatever
-	check_msg(msg.channel_id.say(&ctx.http, "Mya! :heart: (https://github.com/FelixMcFelix/felyne-bot)").await);
-	
+	check_msg(
+		msg.channel_id
+			.say(
+				&ctx.http,
+				"Mya! :heart: (https://github.com/FelixMcFelix/felyne-bot)",
+			)
+			.await,
+	);
+
 	Ok(())
 }
 

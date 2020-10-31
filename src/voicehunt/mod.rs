@@ -1,56 +1,25 @@
 pub mod receiver;
 
-use crate::{
-	automata::*,
-	constants::*,
-	CachedSound,
-	Resources,
-	RxMap,
-	VoiceManager,
-};
-use crossbeam::channel::{
-	self,
-	Receiver,
-	Sender,
-	TryRecvError,
-};
+use crate::{automata::*, constants::*, CachedSound, Resources, RxMap};
+use crossbeam::channel::{self, Receiver, Sender, TryRecvError};
 use dashmap::DashMap;
 use log::*;
-use rand::{
-	distributions::*,
-	random,
-	thread_rng,
-	Rng,
-};
+use rand::{distributions::*, random, thread_rng, Rng};
 use receiver::{listen_in, ReceiverSignal, VoiceHuntReceiver};
-use serenity::{
-	async_trait,
-	client::{
-		*,
-		bridge::voice::ClientVoiceManager,
-	},
-	model::prelude::*,
-	prelude::*,
-	voice::{
-		events::{Event, EventContext, EventHandler, TrackEvent},
-		tracks::{
-			Track,
-			TrackCommand,
-			TrackHandle,
-		},
-		ffmpeg, Handler,
-	},
+use serenity::{async_trait, client::*, model::prelude::*, prelude::*};
+use songbird::{
+	events::{Event, EventContext, EventHandler, TrackEvent},
+	ffmpeg,
+	serenity::SongbirdKey,
+	tracks::{Track, TrackCommand, TrackHandle},
+	Call,
+	Songbird,
 };
 use std::{
-	collections::hash_map::{HashMap, Entry},
-	sync::{
-		Arc,
-	},
+	collections::hash_map::{Entry, HashMap},
+	sync::Arc,
 	thread,
-	time::{
-		Duration,
-		Instant
-	},
+	time::{Duration, Instant},
 };
 use tokio::time;
 
@@ -105,7 +74,12 @@ pub struct VHState {
 }
 
 impl VHState {
-	fn new(guild_id: GuildId, user_id: UserId, vox_manager: Arc<Mutex<ClientVoiceManager>>, resources: RxMap) -> Self {
+	fn new(
+		guild_id: GuildId,
+		user_id: UserId,
+		vox_manager: Arc<Mutex<Call>>,
+		resources: RxMap,
+	) -> Self {
 		// NOTE: will need some further changes if I want to start
 		// in the Stalk or BraveHunt states...
 		let mut out = VHState {
@@ -129,7 +103,7 @@ impl VHState {
 		out
 	}
 
-	fn launch_felyne_thread(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, resources: RxMap) {
+	fn launch_felyne_thread(&mut self, vox_manager: Arc<Mutex<Call>>, resources: RxMap) {
 		let (sender, receiver) = channel::unbounded();
 		let (reverse_sender, reverse_receiver) = channel::unbounded();
 		let guild_id = self.guild_id;
@@ -140,14 +114,28 @@ impl VHState {
 		// Begin!
 		tokio::spawn(async move {
 			// Init state here
-			felyne_life(receiver, reverse_sender, vox_manager, guild_id, vol, self_tx, resources).await;
+			felyne_life(
+				receiver,
+				reverse_sender,
+				vox_manager,
+				guild_id,
+				vol,
+				self_tx,
+				resources,
+			)
+			.await;
 		});
 
 		self.huntsim_tx = Some(sender);
 		self.huntsim_rx = Some(reverse_receiver);
 	}
 
-	fn control(&mut self, vox_manager: Arc<Mutex<ClientVoiceManager>>, mode: VoiceHuntCommand, resources: RxMap) -> &mut Self {
+	fn control(
+		&mut self,
+		vox_manager: Arc<Mutex<Call>>,
+		mode: VoiceHuntCommand,
+		resources: RxMap,
+	) -> &mut Self {
 		// Note: we can read from the ShareMap because entrant code is guaranteed to have the lock.
 		use crate::VoiceHuntCommand::*;
 
@@ -159,10 +147,9 @@ impl VHState {
 					// Moving from Carted to active mode.
 					// Spawn thread.
 					self.launch_felyne_thread(vox_manager, resources);
-				}
+				},
 			}
 		}
-
 
 		let chan_change = match mode {
 			Carted => {
@@ -175,7 +162,7 @@ impl VHState {
 							},
 							Err(TryRecvError::Empty) => {},
 							Err(TryRecvError::Disconnected) => {
-								break 'waitdone;    
+								break 'waitdone;
 							},
 						}
 					}
@@ -213,10 +200,12 @@ impl VHState {
 				self.send(VoiceHuntMessage::Volume(vol));
 				self.volume = vol;
 				false
-			}
+			},
 		};
 
-		if chan_change {self.update_channel();} // Now set the channel.
+		if chan_change {
+			self.update_channel();
+		} // Now set the channel.
 
 		self
 	}
@@ -295,14 +284,22 @@ impl VHState {
 	fn update_incumbent(&mut self, count: u64, channel: ChannelId) -> bool {
 		if let Some(Incumbent(count_old, chan_old)) = self.incumbent_channel {
 			if chan_old == channel || count > count_old {
-				self.incumbent_channel = if count == 0 {None} else {Some(Incumbent(count, channel))};
+				self.incumbent_channel = if count == 0 {
+					None
+				} else {
+					Some(Incumbent(count, channel))
+				};
 
 				count < count_old
 			} else {
 				false
 			}
 		} else {
-			self.incumbent_channel = if count == 0 {None} else {Some(Incumbent(count, channel))};
+			self.incumbent_channel = if count == 0 {
+				None
+			} else {
+				Some(Incumbent(count, channel))
+			};
 			false
 		}
 	}
@@ -320,22 +317,24 @@ impl VHState {
 }
 
 #[inline]
-async fn quit_vox_channel(manager_lock: Arc<Mutex<ClientVoiceManager>>, guild_id: GuildId, receiver_chan: &mut Option<Sender<ReceiverSignal>>) {
+async fn quit_vox_channel(
+	manager_lock: Arc<Mutex<Call>>,
+	guild_id: GuildId,
+	receiver_chan: &mut Option<Sender<ReceiverSignal>>,
+) {
 	let mut manager = manager_lock.lock().await;
 
-	if let Some(handler) = manager.get_mut(guild_id) {
-		handler.stop();
-		if let Some(chan) = receiver_chan {
-			chan.send(ReceiverSignal::Poison);
-		}
-		*receiver_chan = None;
+	manager.stop();
+	if let Some(chan) = receiver_chan {
+		chan.send(ReceiverSignal::Poison);
 	}
+	*receiver_chan = None;
 
-	manager.leave(guild_id);
+	manager.leave().await;
 }
 
 #[inline]
-fn random_element<'a, T>(arr: &'a[T]) -> &'a T {
+fn random_element<'a, T>(arr: &'a [T]) -> &'a T {
 	let mut rng = thread_rng();
 	&arr[Uniform::new(0, arr.len()).sample(&mut rng)]
 }
@@ -355,9 +354,7 @@ impl BgmClass {
 	fn no_gargwa(self) -> bool {
 		use BgmClass::*;
 
-		self == Music ||
-		self == Bonus ||
-		self == BonusResult
+		self == Music || self == Bonus || self == BonusResult
 	}
 }
 
@@ -381,12 +378,12 @@ enum SfxInput {
 }
 
 fn play_bgm(
-		state: BgmClass,
-		vox: &mut Handler,
-		stealth: bool,
-		resources: &RxMap,
-		donezo: &Sender<FelyneEvt>,
-	) -> Option<TrackHandle> {
+	state: BgmClass,
+	vox: &mut Call,
+	stealth: bool,
+	resources: &RxMap,
+	donezo: &Sender<FelyneEvt>,
+) -> Option<TrackHandle> {
 	use BgmClass::*;
 
 	if stealth {
@@ -396,7 +393,9 @@ fn play_bgm(
 	println!("Trying to play...");
 
 	let el_list = match state {
-		NoBgm => { return None; },
+		NoBgm => {
+			return None;
+		},
 		Intro => START,
 		Ambience => AMBIENCE,
 		Music => BGM,
@@ -407,12 +406,16 @@ fn play_bgm(
 
 	let chan = donezo.clone();
 
-	resources.get(random_element(el_list))
+	resources
+		.get(random_element(el_list))
 		.map(|guard| vox.play_source(guard.value().into()))
 		.map(move |track| {
 			track.add_event(
 				Event::Track(TrackEvent::End),
-				FelyneEndTrack {chan, msg: FelyneEvt::BgmEnd},
+				FelyneEndTrack {
+					chan,
+					msg: FelyneEvt::BgmEnd,
+				},
 			);
 			track
 		})
@@ -433,12 +436,12 @@ impl EventHandler for FelyneEndTrack {
 }
 
 fn play_sfx(
-		state: SfxClass,
-		vox: &mut Handler,
-		stealth: bool,
-		resources: &RxMap,
-		donezo: &Sender<FelyneEvt>,
-	) -> Option<TrackHandle> {
+	state: SfxClass,
+	vox: &mut Call,
+	stealth: bool,
+	resources: &RxMap,
+	donezo: &Sender<FelyneEvt>,
+) -> Option<TrackHandle> {
 	use SfxClass::*;
 
 	if stealth {
@@ -448,19 +451,25 @@ fn play_sfx(
 	println!("Trying to play... sfx");
 
 	let el_list = match state {
-		NoSfx => { return None; },
+		NoSfx => {
+			return None;
+		},
 		Cat => SFX,
 		Bonus => BONUS_SFX,
 	};
 
 	let chan = donezo.clone();
 
-	resources.get(random_element(el_list))
+	resources
+		.get(random_element(el_list))
 		.map(|guard| vox.play_source(guard.value().into()))
 		.map(move |track| {
 			track.add_event(
 				Event::Track(TrackEvent::End),
-				FelyneEndTrack {chan, msg: FelyneEvt::SfxEnd},
+				FelyneEndTrack {
+					chan,
+					msg: FelyneEvt::SfxEnd,
+				},
 			);
 			track
 		})
@@ -478,18 +487,18 @@ enum FelyneEvt {
 }
 
 async fn felyne_life(
-		rx: Receiver<VoiceHuntMessage>,
-		tx: Sender<VoiceHuntResponse>,
-		manager_lock: Arc<Mutex<ClientVoiceManager>>,
-		guild_id: GuildId,
-		vol: f32,
-		self_tx: Sender<VoiceHuntMessage>,
-		resources: RxMap,
-	) {
+	rx: Receiver<VoiceHuntMessage>,
+	tx: Sender<VoiceHuntResponse>,
+	manager_lock: Arc<Mutex<Call>>,
+	guild_id: GuildId,
+	vol: f32,
+	self_tx: Sender<VoiceHuntMessage>,
+	resources: RxMap,
+) {
 	println!("In felyne loop");
 	let timer = Duration::from_millis(VOICEHUNT_FRAME_TIME);
-	let vol_range = Uniform::new(0.3,0.4);
-	let bgm_vol_range = Uniform::new(0.15,0.2);
+	let vol_range = Uniform::new(0.3, 0.4);
+	let bgm_vol_range = Uniform::new(0.15, 0.2);
 	let music_vol = 0.3;
 
 	let (sound_tx, sound_rx) = channel::bounded(2);
@@ -553,20 +562,28 @@ async fn felyne_life(
 		use SfxInput::*;
 		sfx_machine
 			.add_priority_transition(
-				NoSfx, Cat, Advance, 0,
+				NoSfx,
+				Cat,
+				Advance,
+				0,
 				Some(Cooldown::new(
 					Uniform::new(Duration::from_millis(600), Duration::from_millis(7_000)).into(),
 					true,
 					false,
-				)))
+				)),
+			)
 			.add_transition(Cat, NoSfx, Advance)
 			.add_priority_transition(
-				NoSfx, Bonus, Advance, 1,
+				NoSfx,
+				Bonus,
+				Advance,
+				1,
 				Some(Cooldown::new(
 					Uniform::new(Duration::from_secs(20), Duration::from_secs(60)).into(),
 					true,
 					true,
-				)))
+				)),
+			)
 			.add_transition(Bonus, NoSfx, Advance);
 	}
 
@@ -592,7 +609,7 @@ async fn felyne_life(
 							} else {
 								*nc = Some(WaitState::Limited);
 							}
-							
+
 							!already_spawned
 						};
 
@@ -615,22 +632,19 @@ async fn felyne_life(
 						}
 					}
 
-
-
 					bgm_machine.refresh();
 					sfx_machine.refresh();
 					curr_sfx = None;
 					curr_bgm = None;
 
-					if manager.join(guild_id, chan).is_some() {
+					if manager.join(chan.into()).await.is_ok() {
 						// test play
-						let mut handler = manager.get_mut(guild_id).unwrap();
-						handler.stop();
+						manager.stop();
 						// Testing voice receive---example 10.
 						// GOAL: ducking!
-						receiver_chan = Some(listen_in(&mut handler));
+						receiver_chan = Some(listen_in(&mut manager));
 
-						let state = if let Some(s) = bgm_machine.advance(BgmInput::TryIntro){
+						let state = if let Some(s) = bgm_machine.advance(BgmInput::TryIntro) {
 							sfx_machine.cause_cooldown(
 								SfxClass::NoSfx,
 								SfxClass::Cat,
@@ -640,11 +654,12 @@ async fn felyne_life(
 							);
 							s
 						} else {
-							bgm_machine.advance(BgmInput::Advance)
+							bgm_machine
+								.advance(BgmInput::Advance)
 								.expect("Should have reached Ambience...")
 						};
 
-						curr_bgm = play_bgm(state, &mut handler, stealthy, &resources, &sound_tx)
+						curr_bgm = play_bgm(state, &mut manager, stealthy, &resources, &sound_tx)
 							.map(|track| {
 								track.set_volume(curr_vol);
 								track
@@ -652,11 +667,12 @@ async fn felyne_life(
 
 						if stealthy {
 							// Play one sound so that discord will ACTUALLY give us voice packets...
-							curr_sfx = play_sfx(SfxClass::Cat, &mut handler, false, &resources, &sound_tx)
-								.map(|track| {
-									track.set_volume(0.1 * curr_vol);
-									track
-								});
+							curr_sfx =
+								play_sfx(SfxClass::Cat, &mut manager, false, &resources, &sound_tx)
+									.map(|track| {
+										track.set_volume(0.1 * curr_vol);
+										track
+									});
 						}
 
 						curr_chan = Some(chan);
@@ -692,17 +708,17 @@ async fn felyne_life(
 					println!("Getting manager...");
 					let mut manager = manager_lock.lock().await;
 					println!("Got manager...");
-					
-					if let Some(mut handler) = manager.get_mut(guild_id){
-						let state = bgm_machine.advance(BgmInput::MoveOutro)
-							.expect("Can always use outro...");
 
-						curr_bgm = play_bgm(state, &mut handler, stealthy, &resources, &sound_tx)
-							.map(|track| {
-								track.set_volume(0.6 * curr_vol);
-								track
-							});
-					}
+					let state = bgm_machine
+						.advance(BgmInput::MoveOutro)
+						.expect("Can always use outro...");
+
+					curr_bgm = play_bgm(state, &mut manager, stealthy, &resources, &sound_tx).map(
+						|track| {
+							track.set_volume(0.6 * curr_vol);
+							track
+						},
+					);
 				}
 			},
 			Ok(VoiceHuntMessage::Volume(new_vol)) => {
@@ -752,25 +768,26 @@ async fn felyne_life(
 
 				if can_play_sfx || bgm_done {
 					let mut manager = manager_lock.lock().await;
-					
-					if let Some(mut handler) = manager.get_mut(guild_id){
-						if can_play_sfx {
-							if let Some(state) = sfx_machine.advance(SfxInput::Advance) {
-								if state != SfxClass::NoSfx {
-									curr_sfx = play_sfx(state, &mut handler, stealthy, &resources, &sound_tx)
+
+					if can_play_sfx {
+						if let Some(state) = sfx_machine.advance(SfxInput::Advance) {
+							if state != SfxClass::NoSfx {
+								curr_sfx =
+									play_sfx(state, &mut manager, stealthy, &resources, &sound_tx)
 										.map(|track| {
 											let mut rng = thread_rng();
 											track.set_volume(vol_range.sample(&mut rng) * curr_vol);
 											track
 										});
-								}
 							}
 						}
+					}
 
-						if bgm_done {
-							if let Some(state) = bgm_machine.advance(BgmInput::Advance) {
-								curr_bgm = play_bgm(state, &mut handler, stealthy, &resources, &sound_tx)
-									.map(|track| {
+					if bgm_done {
+						if let Some(state) = bgm_machine.advance(BgmInput::Advance) {
+							curr_bgm =
+								play_bgm(state, &mut manager, stealthy, &resources, &sound_tx).map(
+									|track| {
 										let vol = if state.no_gargwa() {
 											music_vol
 										} else {
@@ -780,8 +797,8 @@ async fn felyne_life(
 
 										track.set_volume(vol);
 										track
-									});
-							}
+									},
+								);
 						}
 					}
 				}
@@ -798,56 +815,82 @@ async fn felyne_life(
 			},
 		}
 	}
-	tx.send(VoiceHuntResponse::Done)
-		.unwrap_or_else(|_|
-			panic!("[VoiceHunt] Final Done send for {:?}'s handler failed.", guild_id)
-		);
+	tx.send(VoiceHuntResponse::Done).unwrap_or_else(|_| {
+		panic!(
+			"[VoiceHunt] Final Done send for {:?}'s handler failed.",
+			guild_id
+		)
+	});
 }
 
 pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntCommand) {
 	let mut datas = ctx.data.write().await;
-	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
+	let voice_manager_lock = datas
+		.get::<SongbirdKey>()
+		.cloned()
+		.unwrap()
+		.clone()
+		.get_or_insert(guild_id.into());
 	let also_vox_lock = voice_manager_lock.clone();
-	let resources = datas.get::<Resources>()
+	let resources = datas
+		.get::<Resources>()
 		.expect("Resources must exists after init...")
 		.clone();
 
 	let u_id = ctx.cache.current_user_id().await;
 
-	datas.get_mut::<VoiceHunt>()
+	datas
+		.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
 		.or_insert_with(|| VHState::new(guild_id, u_id, also_vox_lock, resources.clone()))
 		.control(voice_manager_lock, mode, resources);
 }
 
-
 pub async fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
 	let mut datas = ctx.data.write().await;
-	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
-	let resources = datas.get::<Resources>()
+	let voice_manager_lock = datas
+		.get::<SongbirdKey>()
+		.cloned()
+		.unwrap()
+		.clone()
+		.get_or_insert(guild_id.into());
+	let resources = datas
+		.get::<Resources>()
 		.expect("Resources must exists after init...")
 		.clone();
 
 	let u_id = ctx.cache.current_user_id().await;
 
-	datas.get_mut::<VoiceHunt>()
+	datas
+		.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
 		.or_insert_with(|| VHState::new(guild_id, u_id, voice_manager_lock, resources))
 		.register_user_state(&vox, true);
 }
 
-pub async fn voicehunt_complete_update(ctx: &Context, guild_id: GuildId, voice_states: HashMap<UserId, VoiceState>) {
+pub async fn voicehunt_complete_update(
+	ctx: &Context,
+	guild_id: GuildId,
+	voice_states: HashMap<UserId, VoiceState>,
+) {
 	let mut datas = ctx.data.write().await;
-	let voice_manager_lock = datas.get::<VoiceManager>().cloned().unwrap().clone();
-	let resources = datas.get::<Resources>()
+	let voice_manager_lock = datas
+		.get::<SongbirdKey>()
+		.cloned()
+		.unwrap()
+		.clone()
+		.get_or_insert(guild_id.into());
+	let resources = datas
+		.get::<Resources>()
 		.expect("Resources must exists after init...")
 		.clone();
 
 	let u_id = ctx.cache.current_user_id().await;
 
-	datas.get_mut::<VoiceHunt>()
+	datas
+		.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
 		.or_insert_with(|| VHState::new(guild_id, u_id, voice_manager_lock, resources.clone()))

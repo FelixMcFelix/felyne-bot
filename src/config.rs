@@ -1,8 +1,5 @@
 use enum_primitive::*;
-use serenity::{
-	framework::standard::Args,
-	model::id::RoleId,
-};
+use serenity::{framework::standard::Args, model::id::RoleId};
 use sqlx::{sqlite::SqliteRow, Error as SqlError, FromRow, Row};
 
 enum_from_primitive! {
@@ -14,11 +11,7 @@ pub enum GatherMode {
 }
 }
 
-const GMODES: &[&str] = &[
-	"never-gather",
-	"when-active",
-	"always-gather",
-];
+const GMODES: &[&str] = &["never-gather", "when-active", "always-gather"];
 
 impl GatherMode {
 	pub const LabelList: &'static [&'static str] = GMODES;
@@ -39,12 +32,12 @@ impl GatherMode {
 
 impl<'r> FromRow<'r, SqliteRow> for GatherMode {
 	fn from_row(row: &'r SqliteRow) -> Result<Self, SqlError> {
-		row.try_get(0)
-			.and_then(|val|
-				Self::from_i16(val).ok_or_else(||
-					SqlError::ColumnDecode{index: "0".to_string(), source: "Invalid mode?".into()}
-				)
-			)
+		row.try_get(0).and_then(|val| {
+			Self::from_i16(val).ok_or_else(|| SqlError::ColumnDecode {
+				index: "0".to_string(),
+				source: "Invalid mode?".into(),
+			})
+		})
 	}
 }
 
@@ -57,10 +50,7 @@ pub enum OptInOutMode {
 }
 }
 
-const OMODES: &[&str] = &[
-	"server-opt-in",
-	"user-opt-in",
-];
+const OMODES: &[&str] = &["server-opt-in", "user-opt-in"];
 
 impl OptInOutMode {
 	pub const LabelList: &'static [&'static str] = OMODES;
@@ -102,24 +92,24 @@ impl OptInOut {
 
 impl<'r> FromRow<'r, SqliteRow> for OptInOut {
 	fn from_row(row: &'r SqliteRow) -> Result<Self, SqlError> {
-		let mode = row.try_get(0)
-			.and_then(|val|
-				OptInOutMode::from_i16(val).ok_or_else(||
-					SqlError::ColumnDecode{index: "0".to_string(), source: "Invalid mode?".into()}
-				)
-			)?;
+		let mode = row.try_get(0).and_then(|val| {
+			OptInOutMode::from_i16(val).ok_or_else(|| SqlError::ColumnDecode {
+				index: "0".to_string(),
+				source: "Invalid mode?".into(),
+			})
+		})?;
 
 		Ok(match mode {
 			OptInOutMode::ServerIn => Self::ServerIn,
 			OptInOutMode::UserIn => {
-				let role = row.try_get(1)
-					.and_then(|val: &str|
-						val.parse::<u64>()
-							.map_err(|e|
-								SqlError::ColumnDecode{index: "1".to_string(), source: e.into()}
-							)
-							.map(RoleId)
-					)?;
+				let role = row.try_get(1).and_then(|val: &str| {
+					val.parse::<u64>()
+						.map_err(|e| SqlError::ColumnDecode {
+							index: "1".to_string(),
+							source: e.into(),
+						})
+						.map(RoleId)
+				})?;
 				Self::UserIn(role)
 			},
 		})
@@ -135,11 +125,7 @@ pub enum ControlMode {
 }
 }
 
-const CMODES: &[&str] = &[
-	"owner",
-	"role",
-	"all",
-];
+const CMODES: &[&str] = &["owner", "role", "all"];
 
 impl ControlMode {
 	pub const LabelList: &'static [&'static str] = CMODES;
@@ -186,14 +172,16 @@ impl Control {
 			return Ok(None);
 		}
 
-		let mode = args.single::<String>()
+		let mode = args
+			.single::<String>()
 			.map_err(|_| ConfigParseError::ArgTake)?;
 
 		match ControlMode::from_str(&mode) {
 			Some(ControlMode::OwnerOnly) => Ok(Some(Control::OwnerOnly)),
 			Some(ControlMode::All) => Ok(Some(Control::All)),
 			Some(ControlMode::WithRole) => {
-				let role = args.single::<String>()
+				let role = args
+					.single::<String>()
 					.map_err(|_| ConfigParseError::MissingRole)?;
 
 				let role = serenity::utils::parse_mention(role.as_str())
@@ -212,25 +200,25 @@ impl Control {
 
 impl<'r> FromRow<'r, SqliteRow> for Control {
 	fn from_row(row: &'r SqliteRow) -> Result<Self, SqlError> {
-		let mode = row.try_get(0)
-			.and_then(|val|
-				ControlMode::from_i16(val).ok_or_else(||
-					SqlError::ColumnDecode{index: "0".to_string(), source: "Invalid mode?".into()}
-				)
-			)?;
+		let mode = row.try_get(0).and_then(|val| {
+			ControlMode::from_i16(val).ok_or_else(|| SqlError::ColumnDecode {
+				index: "0".to_string(),
+				source: "Invalid mode?".into(),
+			})
+		})?;
 
 		Ok(match mode {
 			ControlMode::OwnerOnly => Self::OwnerOnly,
 			ControlMode::All => Self::All,
 			ControlMode::WithRole => {
-				let role = row.try_get(1)
-					.and_then(|val: &str|
-						val.parse::<u64>()
-							.map_err(|e|
-								SqlError::ColumnDecode{index: "1".to_string(), source: e.into()}
-							)
-							.map(RoleId)
-					)?;
+				let role = row.try_get(1).and_then(|val: &str| {
+					val.parse::<u64>()
+						.map_err(|e| SqlError::ColumnDecode {
+							index: "1".to_string(),
+							source: e.into(),
+						})
+						.map(RoleId)
+				})?;
 				Self::WithRole(role)
 			},
 		})

@@ -15,14 +15,7 @@ pub enum Label {
 }
 
 const LABELS: &[&str] = &[
-	"none",
-	"social",
-	"gaming",
-	"raid",
-	"art",
-	"music",
-	"tech",
-	"other",
+	"none", "social", "gaming", "raid", "art", "music", "tech", "other",
 ];
 
 impl Label {
@@ -48,11 +41,11 @@ impl Label {
 
 impl<'r> FromRow<'r, SqliteRow> for Label {
 	fn from_row(row: &'r SqliteRow) -> Result<Self, SqlError> {
-		row.try_get(0)
-			.and_then(|val|
-				Self::from_i16(val).ok_or_else(||
-					SqlError::ColumnDecode{index: "0".to_string(), source: "Invalid mode?".into()}
-				)
-			)
+		row.try_get(0).and_then(|val| {
+			Self::from_i16(val).ok_or_else(|| SqlError::ColumnDecode {
+				index: "0".to_string(),
+				source: "Invalid mode?".into(),
+			})
+		})
 	}
 }
