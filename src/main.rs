@@ -273,10 +273,10 @@ async fn main() {
 		add_resources(&resources, "bgm", BBQ, false).await;
 		// println!("A");
 		add_resources(&resources, "bgm", BBQ_RESULT, false).await;
-		add_resources(&resources, "bgm", SLEEP, false).await;
-		add_resources(&resources, "bgm", START, false).await;
-		add_resources(&resources, "bgm", AMBIENCE, false).await;
-		add_resources(&resources, "bgm", BGM, false).await;
+		add_resources(&resources, "bgm", SLEEP, true).await;
+		add_resources(&resources, "bgm", START, true).await;
+		add_resources(&resources, "bgm", AMBIENCE, true).await;
+		add_resources(&resources, "bgm", BGM, true).await;
 
 		add_resources(&resources, "sfx", SFX, false).await;
 		add_resources(&resources, "sfx", BONUS_SFX, false).await;
