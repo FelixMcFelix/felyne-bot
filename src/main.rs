@@ -19,7 +19,10 @@ use futures::future::FutureExt;
 use log::*;
 use serenity::{
 	async_trait,
-	client::*,
+	client::{
+		*,
+		bridge::gateway::GatewayIntents,
+	},
 	framework::standard::{
 		macros::{check, command, group, help},
 		Args,
@@ -228,6 +231,8 @@ async fn main() {
 		}
 	};
 
+	println!("{:?} {:?}", owners, bot_id);
+
 	let move_owners = owners.clone();
 
 	// Establish the bot's config, register all our commands...
@@ -256,6 +261,12 @@ async fn main() {
 		.event_handler(FelyneEvts)
 		.framework(framework)
 		.register_songbird()
+		.intents(
+			GatewayIntents::GUILDS
+			| GatewayIntents::GUILD_MESSAGES
+			| GatewayIntents::GUILD_VOICE_STATES
+			// | GatewayIntents::GUILD_MEMBERS
+		)
 		.await
 		.expect("Err creating client");
 
@@ -332,6 +343,9 @@ async fn can_control_cat(
 				"Control commands only valid in guild channel (i.e., not DMs).",
 			),
 	};
+
+	println!("{:?}", ctx.cache.guilds().await);
+	println!("{:?}", ctx.cache.unavailable_guilds().await);
 
 	let datas = ctx.data.read().await;
 
@@ -420,16 +434,19 @@ struct Public;
 
 #[group]
 #[checks(Control)]
+#[owner_privilege]
 #[commands(hunt, cart, volume, watch)]
 struct Control;
 
 #[group]
 #[checks(Admin)]
+#[owner_privilege]
 #[commands(log_to, felyne_prefix, admin_ctl_mode, ctl_mode)]
 struct Admin;
 
 #[command]
 #[aliases("log-to")]
+#[owner_privilege]
 async fn log_to(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	let out_chan = parse_chan_mention(&mut args);
 
@@ -460,6 +477,7 @@ async fn log_to(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 
 #[command]
 #[aliases("felyne-prefix")]
+#[owner_privilege]
 async fn felyne_prefix(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	let new_prefix = args.single::<String>();
 
@@ -496,12 +514,14 @@ async fn felyne_prefix(ctx: &Context, msg: &Message, mut args: Args) -> CommandR
 
 #[command]
 #[aliases("admin-ctl-mode")]
+#[owner_privilege]
 async fn admin_ctl_mode(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	ctl_mode_basis(ctx, msg, args, true).await
 }
 
 #[command]
 #[aliases("ctl-mode")]
+#[owner_privilege]
 async fn ctl_mode(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	ctl_mode_basis(ctx, msg, args, false).await
 }
@@ -527,7 +547,11 @@ async fn ctl_mode_basis(
 					msg.channel_id
 						.say(
 							&ctx.http,
-							format!("Now accepting admin commands from: {:?}", &cm),
+							format!(
+								"Now accepting{} commands from: {:?}",
+								if do_for_admin { " admin" } else { "" },
+								&cm,
+							),
 						)
 						.await,
 				);
@@ -567,6 +591,7 @@ async fn ctl_mode_basis(
 }
 
 #[command]
+#[owner_privilege]
 async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache).await {
@@ -596,6 +621,7 @@ async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 }
 
 #[command]
+#[owner_privilege]
 async fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache).await {
@@ -614,6 +640,7 @@ async fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 }
 
 #[command]
+#[owner_privilege]
 async fn cart(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache).await {
@@ -632,6 +659,7 @@ async fn cart(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 
 #[command]
 #[aliases("vol")]
+#[owner_privilege]
 async fn volume(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
 	let guild = match msg.guild(&ctx.cache).await {

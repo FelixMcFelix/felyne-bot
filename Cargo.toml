@@ -26,11 +26,13 @@ tracing-futures = "0.2"
 
 [dependencies.serenity]
 features = ["cache", "framework", "standard_framework", "rustls_backend", "voice", "utils"]
+# features = ["framework", "standard_framework", "rustls_backend", "voice", "utils"]
 git = "https://github.com/serenity-rs/serenity.git"
 # branch = "next"
-rev = "fd6f08b7ca8239cd4c17865b023cb06867c1ff98"
+# rev = "fd6f08b7ca8239cd4c17865b023cb06867c1ff98"
+# path = "../serenity"
 
 [dependencies.songbird]
-git = "https://github.com/serenity-rs/serenity.git"
-# branch = "next"
-rev = "fd6f08b7ca8239cd4c17865b023cb06867c1ff98"
+# git = "https://github.com/serenity-rs/serenity.git"
+# rev = "fd6f08b7ca8239cd4c17865b023cb06867c1ff98"
+path = "../serenity/songbird"
