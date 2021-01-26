@@ -1,6 +1,7 @@
 use enum_primitive::*;
+use serde::{Deserialize, Serialize};
 use serenity::{framework::standard::Args, model::id::RoleId};
-use sqlx::{sqlite::SqliteRow, Error as SqlError, FromRow, Row};
+use tokio_postgres::{Error as SqlError, Row};
 
 enum_from_primitive! {
 #[derive(Clone, Copy, Debug)]
@@ -30,14 +31,9 @@ impl GatherMode {
 	}
 }
 
-impl<'r> FromRow<'r, SqliteRow> for GatherMode {
-	fn from_row(row: &'r SqliteRow) -> Result<Self, SqlError> {
-		row.try_get(0).and_then(|val| {
-			Self::from_i16(val).ok_or_else(|| SqlError::ColumnDecode {
-				index: "0".to_string(),
-				source: "Invalid mode?".into(),
-			})
-		})
+impl From<&Row> for GatherMode {
+	fn from(row: &Row) -> Self {
+		Self::from_i16(row.get(0)).expect("Invalid Db state!")
 	}
 }
 
@@ -90,29 +86,17 @@ impl OptInOut {
 	}
 }
 
-impl<'r> FromRow<'r, SqliteRow> for OptInOut {
-	fn from_row(row: &'r SqliteRow) -> Result<Self, SqlError> {
-		let mode = row.try_get(0).and_then(|val| {
-			OptInOutMode::from_i16(val).ok_or_else(|| SqlError::ColumnDecode {
-				index: "0".to_string(),
-				source: "Invalid mode?".into(),
-			})
-		})?;
+impl From<&Row> for OptInOut {
+	fn from(row: &Row) -> Self {
+		let mode = OptInOutMode::from_i16(row.get(0)).expect("Invalid Db state!");
 
-		Ok(match mode {
+		match mode {
 			OptInOutMode::ServerIn => Self::ServerIn,
 			OptInOutMode::UserIn => {
-				let role = row.try_get(1).and_then(|val: &str| {
-					val.parse::<u64>()
-						.map_err(|e| SqlError::ColumnDecode {
-							index: "1".to_string(),
-							source: e.into(),
-						})
-						.map(RoleId)
-				})?;
-				Self::UserIn(role)
+				let i_role: i64 = row.get(1);
+				Self::UserIn(RoleId(i_role as u64))
 			},
-		})
+		}
 	}
 }
 
@@ -198,30 +182,18 @@ impl Control {
 	}
 }
 
-impl<'r> FromRow<'r, SqliteRow> for Control {
-	fn from_row(row: &'r SqliteRow) -> Result<Self, SqlError> {
-		let mode = row.try_get(0).and_then(|val| {
-			ControlMode::from_i16(val).ok_or_else(|| SqlError::ColumnDecode {
-				index: "0".to_string(),
-				source: "Invalid mode?".into(),
-			})
-		})?;
+impl From<&Row> for Control {
+	fn from(row: &Row) -> Self {
+		let mode = ControlMode::from_i16(row.get(0)).expect("Invalid Db state!");
 
-		Ok(match mode {
+		match mode {
 			ControlMode::OwnerOnly => Self::OwnerOnly,
 			ControlMode::All => Self::All,
 			ControlMode::WithRole => {
-				let role = row.try_get(1).and_then(|val: &str| {
-					val.parse::<u64>()
-						.map_err(|e| SqlError::ColumnDecode {
-							index: "1".to_string(),
-							source: e.into(),
-						})
-						.map(RoleId)
-				})?;
-				Self::WithRole(role)
+				let i_role: i64 = row.get(1);
+				Self::WithRole(RoleId(i_role as u64))
 			},
-		})
+		}
 	}
 }
 
@@ -237,4 +209,18 @@ pub enum ConfigParseError {
 	BadMode,
 	IllegalRole,
 	MissingRole,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BotConfig {
+	pub database: DatabaseConfig,
+	pub token: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DatabaseConfig {
+	pub user: String,
+	pub password: String,
+	pub host: String,
+	pub port: Option<u16>,
 }

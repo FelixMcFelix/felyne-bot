@@ -7,7 +7,7 @@ mod voicehunt;
 mod watchcat;
 
 use crate::{
-	config::{ConfigParseError, Control as CfgControl, ControlMode},
+	config::{BotConfig, ConfigParseError, Control as CfgControl, ControlMode},
 	constants::*,
 	dbs::*,
 	voicehunt::*,
@@ -16,22 +16,18 @@ use crate::{
 use core::future::Future;
 use dashmap::DashMap;
 use futures::future::FutureExt;
-use log::*;
 use serenity::{
 	async_trait,
-	client::{
-		*,
-		bridge::gateway::GatewayIntents,
-	},
+	client::{bridge::gateway::GatewayIntents, *},
 	framework::standard::{
 		macros::{check, command, group, help},
 		Args,
 		Check,
-		CheckResult,
 		CommandError,
 		CommandGroup,
 		CommandOptions,
 		CommandResult,
+		Reason as CheckReason,
 		StandardFramework,
 	},
 	http::client::Http,
@@ -49,7 +45,6 @@ use songbird::{
 	Bitrate,
 	SerenityInit,
 };
-use sqlx::sqlite::SqlitePool;
 use std::{
 	collections::{HashMap, HashSet},
 	convert::TryInto,
@@ -58,22 +53,19 @@ use std::{
 	io::prelude::*,
 	sync::Arc,
 };
+use tokio_postgres::Client as DbClient;
+use tracing::*;
 
 struct Db;
 
 impl TypeMapKey for Db {
-	type Value = DbPools;
+	type Value = DbClient;
 }
 
 struct Owners;
 
 impl TypeMapKey for Owners {
 	type Value = HashSet<UserId>;
-}
-
-struct DbPools {
-	read: SqlitePool,
-	write: SqlitePool,
 }
 
 struct Resources;
@@ -119,37 +111,33 @@ impl EventHandler for FelyneEvts {
 		watchcat(&ctx, guild_id, WatchcatCommand::BufferMsg(Box::new(msg))).await;
 	}
 
-	async fn message_delete(&self, ctx: Context, chan: ChannelId, msg: MessageId) {
-		// Get the guild ID.
-		let guild = chan.to_channel(&ctx).await.map(Channel::guild);
-
-		let guild_id = match guild {
-			Ok(Some(c)) => c.guild_id,
-			_ => {
-				return;
-			},
-		};
-
-		watchcat(
-			&ctx,
-			guild_id,
-			WatchcatCommand::ReportDelete(chan, vec![msg]),
-		)
-		.await;
+	async fn message_delete(
+		&self,
+		ctx: Context,
+		chan: ChannelId,
+		msg: MessageId,
+		guild_id: Option<GuildId>,
+	) {
+		if let Some(guild_id) = guild_id {
+			watchcat(
+				&ctx,
+				guild_id,
+				WatchcatCommand::ReportDelete(chan, vec![msg]),
+			)
+			.await;
+		}
 	}
 
-	async fn message_delete_bulk(&self, ctx: Context, chan: ChannelId, msgs: Vec<MessageId>) {
-		// Get the guild ID.
-		let guild = chan.to_channel(&ctx).await.map(Channel::guild);
-
-		let guild_id = match guild {
-			Ok(Some(c)) => c.guild_id,
-			_ => {
-				return;
-			},
-		};
-
-		watchcat(&ctx, guild_id, WatchcatCommand::ReportDelete(chan, msgs)).await;
+	async fn message_delete_bulk(
+		&self,
+		ctx: Context,
+		chan: ChannelId,
+		msgs: Vec<MessageId>,
+		guild_id: Option<GuildId>,
+	) {
+		if let Some(guild_id) = guild_id {
+			watchcat(&ctx, guild_id, WatchcatCommand::ReportDelete(chan, msgs)).await;
+		}
 	}
 
 	// Should provide us with a set of full guild info as we connect to each!
@@ -198,12 +186,15 @@ async fn main() {
 		.read_to_string(&mut token)
 		.unwrap_or_else(|_| panic!("Nya!! (I can see '{}', but I can't read it!)", &args[1]));
 
-	let token_raw = token.as_str().trim();
+	let bot_config: BotConfig =
+		serde_json::from_str(&token).expect("Mrrya?! (Configuration file was invalid!)");
+
+	let token_raw = bot_config.token.as_str().trim();
 
 	validate_token(&token_raw).expect("Naa nya! (Token invalid!)");
 
 	// Init the Database
-	let mut db = match db_conn().await {
+	let mut db = match db_conn(&bot_config.database).await {
 		Ok(d) => d,
 		Err(e) => {
 			error!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
@@ -212,7 +203,7 @@ async fn main() {
 	};
 
 	// Try and build tables, if we don't have them.
-	if let Err(e) = init_db_tables(&mut db.write).await {
+	if let Err(e) = init_db_tables(&db).await {
 		error!("Nya nya nya?!?! (Couldn't setup db tables: {:?})", e);
 		return;
 	}
@@ -246,7 +237,7 @@ async fn main() {
 				let db = datas.get::<Db>().expect("DB conn installed...");
 
 				Some((if let Some(g_id) = msg.guild(&ctx.cache).await {
-					select_prefix(&db.read, g_id.id).await.ok()
+					select_prefix(&db, g_id.id).await.ok()
 				} else {None}).unwrap_or_else(|| "!".to_string()))
 			})})
 			.on_mention(Some(bot_id))
@@ -257,17 +248,22 @@ async fn main() {
 		.group(&CONTROL_GROUP)
 		.group(&ADMIN_GROUP);
 
-	let mut client = Client::builder(&token)
+	let client = Client::builder(&token_raw)
 		.event_handler(FelyneEvts)
 		.framework(framework)
 		.register_songbird()
-		.intents(
-			GatewayIntents::GUILDS
-			| GatewayIntents::GUILD_MESSAGES
-			| GatewayIntents::GUILD_VOICE_STATES
-			// | GatewayIntents::GUILD_MEMBERS
-		)
-		.await
+		// .intents(
+		// 	GatewayIntents::GUILDS
+		// 		| GatewayIntents::GUILD_MESSAGES
+		// 		| GatewayIntents::GUILD_VOICE_STATES, // | GatewayIntents::GUILD_MEMBERS
+		// )
+		.await;
+
+	if let Err(e) = &client {
+		println!("MRAOWR! ({})", e);
+	}
+
+	let mut client = client
 		.expect("Err creating client");
 
 	// Okay, copy the client's voice manager into its data area so that commands can see it.
@@ -335,13 +331,13 @@ async fn can_control_cat(
 	msg: &Message,
 	args: &mut Args,
 	opts: &CommandOptions,
-) -> CheckResult {
+) -> Result<(), CheckReason> {
 	let g_id = match msg.guild_id {
 		Some(id) => id,
 		_ =>
-			return CheckResult::new_user(
-				"Control commands only valid in guild channel (i.e., not DMs).",
-			),
+			return Err(CheckReason::User(
+				"Control commands only valid in guild channel (i.e., not DMs).".into(),
+			)),
 	};
 
 	println!("{:?}", ctx.cache.guilds().await);
@@ -351,20 +347,15 @@ async fn can_control_cat(
 
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
-	let ctl = select_control_cfg(&db.read, g_id)
-		.await
-		.ok()
-		.unwrap_or_default();
+	let ctl = select_control_cfg(&db, g_id).await.ok().unwrap_or_default();
 
 	println!("Need ctl check: {:?}", ctl);
 
 	let o = match shared_ctl_check(ctl, ctx, msg).await {
-		CheckResult::Success => CheckResult::Success,
-		a => match can_admin_cat(ctx, msg, args, opts).await {
-			CheckResult::Success => CheckResult::Success,
-			a => a,
-		},
+		Err(e) => can_admin_cat(ctx, msg, args, opts).await,
+		a => a,
 	};
+
 	println!("{:?}", o);
 	o
 }
@@ -376,20 +367,20 @@ async fn can_admin_cat(
 	msg: &Message,
 	args: &mut Args,
 	opts: &CommandOptions,
-) -> CheckResult {
+) -> Result<(), CheckReason> {
 	let g_id = match msg.guild_id {
 		Some(id) => id,
 		_ =>
-			return CheckResult::new_user(
-				"Control commands only valid in guild channel (i.e., not DMs).",
-			),
+			return Err(CheckReason::User(
+				"Control commands only valid in guild channel (i.e., not DMs).".into(),
+			)),
 	};
 
 	let datas = ctx.data.read().await;
 
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
-	let ctl = select_control_admin_cfg(&db.read, g_id)
+	let ctl = select_control_admin_cfg(&db, g_id)
 		.await
 		.ok()
 		.unwrap_or_default();
@@ -399,32 +390,38 @@ async fn can_admin_cat(
 	shared_ctl_check(ctl, ctx, msg).await
 }
 
-async fn shared_ctl_check(control: CfgControl, ctx: &Context, msg: &Message) -> CheckResult {
+async fn shared_ctl_check(
+	control: CfgControl,
+	ctx: &Context,
+	msg: &Message,
+) -> Result<(), CheckReason> {
 	use CfgControl::*;
 
 	(match control {
 		OwnerOnly => msg.guild(ctx).await.map(|guild| {
 			if guild.owner_id == msg.author.id {
-				CheckResult::Success
+				Ok(())
 			} else {
 				println!(
 					"Not a valid person: {:?} vs {:?}",
 					msg.author.id, guild.owner_id
 				);
-				CheckResult::new_user("User is not server/bot owner.")
+				Err(CheckReason::User("User is not server/bot owner.".into()))
 			}
 		}),
 		WithRole(role) => msg.member(ctx).await.ok().map(|member| {
 			if member.roles.contains(&role) {
-				CheckResult::Success
+				Ok(())
 			} else {
-				CheckResult::new_user("User lacks necessary role.")
+				Err(CheckReason::User("User lacks necessary role.".into()))
 			}
 		}),
-		All => Some(CheckResult::Success),
+		All => Some(Ok(())),
 	})
 	.unwrap_or_else(|| {
-		CheckResult::new_user("Checked command occurred outside of a Guild Channel.")
+		Err(CheckReason::User(
+			"Checked command occurred outside of a Guild Channel.".into(),
+		))
 	})
 }
 
@@ -498,7 +495,7 @@ async fn felyne_prefix(ctx: &Context, msg: &Message, mut args: Args) -> CommandR
 	let mut datas = ctx.data.read().await;
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
-	upsert_prefix(&db.write, guild_id, &new_prefix).await;
+	upsert_prefix(&db, guild_id, &new_prefix).await;
 
 	check_msg(
 		msg.channel_id
@@ -539,9 +536,9 @@ async fn ctl_mode_basis(
 
 			if let Some(g_id) = msg.guild_id {
 				if do_for_admin {
-					upsert_control_admin_cfg(&db.write, g_id, cm).await;
+					upsert_control_admin_cfg(&db, g_id, cm).await;
 				} else {
-					upsert_control_cfg(&db.write, g_id, cm).await;
+					upsert_control_cfg(&db, g_id, cm).await;
 				}
 				check_msg(
 					msg.channel_id

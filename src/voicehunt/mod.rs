@@ -1,9 +1,8 @@
 pub mod receiver;
 
 use crate::{automata::*, constants::*, CachedSound, Resources, RxMap};
-use crossbeam::channel::{self, Receiver, Sender, TryRecvError};
 use dashmap::DashMap;
-use log::*;
+use flume::{self, Receiver, Sender, TryRecvError};
 use rand::{distributions::*, random, thread_rng, Rng};
 use receiver::{listen_in, ReceiverSignal, VoiceHuntReceiver};
 use serenity::{async_trait, client::*, model::prelude::*, prelude::*};
@@ -22,6 +21,7 @@ use std::{
 	time::{Duration, Instant},
 };
 use tokio::time;
+use tracing::*;
 
 pub struct VoiceHunt;
 
@@ -104,8 +104,8 @@ impl VHState {
 	}
 
 	fn launch_felyne_thread(&mut self, vox_manager: Arc<Mutex<Call>>, resources: RxMap) {
-		let (sender, receiver) = channel::unbounded();
-		let (reverse_sender, reverse_receiver) = channel::unbounded();
+		let (sender, receiver) = flume::unbounded();
+		let (reverse_sender, reverse_receiver) = flume::unbounded();
 		let guild_id = self.guild_id;
 		let vol = self.volume;
 
@@ -501,7 +501,7 @@ async fn felyne_life(
 	let bgm_vol_range = Uniform::new(0.15, 0.2);
 	let music_vol = 0.3;
 
-	let (sound_tx, sound_rx) = channel::bounded(2);
+	let (sound_tx, sound_rx) = flume::bounded(2);
 
 	let mut curr_vol = vol;
 
@@ -808,7 +808,7 @@ async fn felyne_life(
 					break 'escape;
 				}
 
-				time::delay_for(timer).await;
+				time::sleep(timer).await;
 			},
 			Err(TryRecvError::Disconnected) => {
 				break 'escape;

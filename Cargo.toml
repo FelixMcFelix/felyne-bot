@@ -1,6 +1,6 @@
 [package]
 name = "felyne-bot"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
 edition = "2018"
 
@@ -9,30 +9,20 @@ lto = true
 
 [dependencies]
 bincode = "1"
-crossbeam = "0.7"
-dashmap = "4.0.0-rc6"
+dashmap = "4"
 enum_primitive = "0.1"
+flume = "0.10"
 futures = "0.3"
-log = "0.4"
 parking_lot = "0.11"
-rand = "0.7"
+postgres-native-tls = "0.5"
+native-tls = "0.2"
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
-# sqlx = { default-features = false, features = [ "runtime-tokio", "sqlite" ], git = "https://github.com/launchbadge/sqlx.git" }
-sqlx = { default-features = false, features = [ "runtime-tokio", "sqlite" ], version = "0.4.0-beta.1" }
-tokio = { version = "0.2", features = [ "full" ]}
+serde_json = "1"
+serenity = { version = "^0.10.2", default_features = false, features = ["cache", "framework", "standard_framework", "native_tls_backend", "voice", "utils"] }
+songbird = { version ="^0.1.1", default_features = false, features = ["serenity-native", "driver", "gateway"], path = "../songbird" }
+tokio = { version = "1", features = [ "full" ]}
+tokio-postgres = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.2"
 tracing-futures = "0.2"
-
-[dependencies.serenity]
-features = ["cache", "framework", "standard_framework", "rustls_backend", "voice", "utils"]
-# features = ["framework", "standard_framework", "rustls_backend", "voice", "utils"]
-git = "https://github.com/serenity-rs/serenity.git"
-# branch = "next"
-# rev = "fd6f08b7ca8239cd4c17865b023cb06867c1ff98"
-# path = "../serenity"
-
-[dependencies.songbird]
-# git = "https://github.com/serenity-rs/serenity.git"
-# rev = "fd6f08b7ca8239cd4c17865b023cb06867c1ff98"
-path = "../serenity/songbird"

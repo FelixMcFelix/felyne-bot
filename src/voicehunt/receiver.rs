@@ -1,7 +1,6 @@
 use crate::constants::TRACE_DIR;
-use crossbeam::channel::{self, Receiver, Sender, TryRecvError};
 use dashmap::DashMap;
-use log::*;
+use flume::{Receiver, Sender, TryRecvError};
 use serde::{Deserialize, Serialize};
 use serenity::async_trait;
 use songbird::{
@@ -17,6 +16,7 @@ use std::{
 	thread,
 	time::{SystemTime, UNIX_EPOCH},
 };
+use tracing::*;
 
 type Ssrc = u32;
 type Uid = u64;
@@ -31,7 +31,7 @@ pub struct VoiceHuntReceiver {
 
 impl VoiceHuntReceiver {
 	pub fn new() -> Self {
-		let (tx, rx) = channel::bounded(1);
+		let (tx, rx) = flume::bounded(1);
 		Self {
 			sessions: Arc::new(Default::default()),
 			user_map: Arc::new(Default::default()),
@@ -59,11 +59,16 @@ impl EventHandler for VoiceHuntReceiver {
 		} else {
 			match ctx {
 				EventContext::SpeakingStateUpdate(s) => {
-					if self.sessions.get(&s.ssrc).is_none() {
-						self.sessions.insert(s.ssrc, VoiceHuntSession::new());
-					}
-					if self.user_map.get(&s.user_id.unwrap().0).is_none() {
-						self.user_map.insert(s.user_id.unwrap().0, s.ssrc);
+					let _ = self
+						.sessions
+						.entry(s.ssrc)
+						.or_insert_with(|| VoiceHuntSession::new());
+
+					if let Some(u_id) = &s.user_id {
+						let _ = self
+							.user_map
+							.entry(u_id.0)
+							.or_insert_with(|| s.ssrc);
 					}
 
 					None
@@ -77,19 +82,16 @@ impl EventHandler for VoiceHuntReceiver {
 					println!("RTP");
 					let ssrc = packet.ssrc;
 
-					if self.sessions.get(&ssrc).is_none() {
-						self.sessions.insert(ssrc, VoiceHuntSession::new());
-					}
+					let mut entry = self
+						.sessions
+						.entry(ssrc)
+						.or_insert_with(|| VoiceHuntSession::new());
 
-					self.sessions.update(&ssrc, move |ssrc, sess| {
-						let mut n_sess = sess.clone();
-						n_sess.record(
-							packet.timestamp.into(),
-							packet.sequence.into(),
-							packet.payload.len() - payload_offset,
-						);
-						n_sess
-					});
+					entry.value_mut().record(
+						packet.timestamp.into(),
+						packet.sequence.into(),
+						packet.payload.len() - payload_offset,
+					);
 
 					None
 				},
@@ -98,20 +100,21 @@ impl EventHandler for VoiceHuntReceiver {
 					None
 				},
 				EventContext::ClientConnect(s) => {
-					if self.sessions.get(&s.audio_ssrc).is_none() {
-						self.sessions.insert(s.audio_ssrc, VoiceHuntSession::new());
-					}
-					if self.user_map.get(&s.user_id.0).is_none() {
-						self.user_map.insert(s.user_id.0, s.audio_ssrc);
-					}
+					let _ = self
+						.sessions
+						.entry(s.audio_ssrc)
+						.or_insert_with(|| VoiceHuntSession::new());
+
+					let _ = self
+						.user_map
+						.entry(s.user_id.0)
+						.or_insert_with(|| s.audio_ssrc);
 
 					None
 				},
 				EventContext::ClientDisconnect(s) => {
-					if let Some(guard) = self.user_map.remove_take(&s.user_id.0) {
-						let (k, v) = guard.pair();
-						if let Some(guard) = self.sessions.remove_take(v) {
-							let (ssrc, sess) = guard.pair();
+					if let Some((k, v)) = self.user_map.remove(&s.user_id.0) {
+						if let Some((ssrc, sess)) = self.sessions.remove(&v) {
 							finalise_audio_session(sess.clone());
 						}
 					}

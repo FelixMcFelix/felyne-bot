@@ -1,12 +1,12 @@
 use crate::{constants::*, dbs::*, Db};
 use dashmap::DashMap;
-use log::*;
 use rand::random;
 use serenity::{client::*, model::prelude::*, prelude::*, utils::*};
-use sqlx::{prelude::*, sqlite::SqliteRow, Error as SqlError, SqlitePool};
 use std::{collections::HashMap, sync::Arc, thread};
 use tokio::sync::RwLock;
 use tokio::task;
+use tokio_postgres::{Client, Error as SqlError, Row};
+use tracing::*;
 
 type Space = (String, Arc<Mutex<Option<Vec<u8>>>>);
 
@@ -139,7 +139,7 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
 	if let SetChannel(_) = cmd {
-	} else if let Ok(chan) = select_watchcat(&db.read, guild_id).await {
+	} else if let Ok(chan) = select_watchcat(&db, guild_id).await {
 		let top_do = top_dog_holder
 			.get(&guild_id)
 			.expect("Guaranteed to exist by above insertion");
@@ -157,7 +157,7 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 			let mut top_dog = top_do.write().await;
 			top_dog.output_channel = Some(chan);
 
-			upsert_watchcat(&db.write, guild_id, chan).await;
+			upsert_watchcat(&db, guild_id, chan).await;
 		},
 		ReportDelete(event_chan, msgs) => {
 			let top_do = top_dog_holder
@@ -229,7 +229,7 @@ async fn report_delete(
 
 			let author = &message.author;
 			author_name = author.tag();
-			author_mention = author.mention();
+			author_mention = author.mention().to_string();
 			author_img = author.face();
 		}
 
