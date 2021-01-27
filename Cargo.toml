@@ -4,9 +4,6 @@ version = "0.4.0"
 authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
 edition = "2018"
 
-[profile.release]
-lto = true
-
 [dependencies]
 bincode = "1"
 dashmap = "4"
