@@ -13,18 +13,13 @@ use crate::{
 	voicehunt::*,
 	watchcat::*,
 };
-use core::future::Future;
 use dashmap::DashMap;
-use futures::future::FutureExt;
 use serenity::{
 	async_trait,
-	client::{bridge::gateway::GatewayIntents, *},
+	client::*,
 	framework::standard::{
 		macros::{check, command, group, help},
 		Args,
-		Check,
-		CommandError,
-		CommandGroup,
 		CommandOptions,
 		CommandResult,
 		Reason as CheckReason,
@@ -263,8 +258,7 @@ async fn main() {
 		println!("MRAOWR! ({})", e);
 	}
 
-	let mut client = client
-		.expect("Err creating client");
+	let mut client = client.expect("Err creating client");
 
 	// Okay, copy the client's voice manager into its data area so that commands can see it.
 	{
@@ -352,7 +346,7 @@ async fn can_control_cat(
 	println!("Need ctl check: {:?}", ctl);
 
 	let o = match shared_ctl_check(ctl, ctx, msg).await {
-		Err(e) => can_admin_cat(ctx, msg, args, opts).await,
+		Err(_e) => can_admin_cat(ctx, msg, args, opts).await,
 		a => a,
 	};
 
@@ -365,8 +359,8 @@ async fn can_control_cat(
 async fn can_admin_cat(
 	ctx: &Context,
 	msg: &Message,
-	args: &mut Args,
-	opts: &CommandOptions,
+	_args: &mut Args,
+	_opts: &CommandOptions,
 ) -> Result<(), CheckReason> {
 	let g_id = match msg.guild_id {
 		Some(id) => id,
@@ -531,7 +525,7 @@ async fn ctl_mode_basis(
 ) -> CommandResult {
 	match CfgControl::parse(&mut args) {
 		Ok(Some(cm)) => {
-			let mut datas = ctx.data.read().await;
+			let datas = ctx.data.read().await;
 			let db = datas.get::<Db>().expect("DB conn installed...");
 
 			if let Some(g_id) = msg.guild_id {
@@ -561,7 +555,7 @@ async fn ctl_mode_basis(
 				msg.channel_id
 					.say(
 						&ctx.http,
-						format!("I support the modes: {:?}", &ControlMode::LabelList),
+						format!("I support the modes: {:?}", &ControlMode::LABEL_LIST),
 					)
 					.await,
 			);

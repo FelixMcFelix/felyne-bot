@@ -2,10 +2,8 @@ use crate::{constants::*, dbs::*, Db};
 use dashmap::DashMap;
 use rand::random;
 use serenity::{client::*, model::prelude::*, prelude::*, utils::*};
-use std::{collections::HashMap, sync::Arc, thread};
+use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::task;
-use tokio_postgres::{Client, Error as SqlError, Row};
 use tracing::*;
 
 type Space = (String, Arc<Mutex<Option<Vec<u8>>>>);
@@ -168,7 +166,7 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 				report_delete(&top_dog, event_chan, msg, ctx).await;
 			}
 		},
-		BufferMsg(mut msg) => {
+		BufferMsg(msg) => {
 			let top_do = top_dog_holder
 				.get(&guild_id)
 				.expect("Guaranteed to exist by above insertion");

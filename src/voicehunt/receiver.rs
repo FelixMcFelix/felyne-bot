@@ -8,13 +8,13 @@ use songbird::{
 	Call,
 };
 use std::{
-	collections::hash_map::HashMap,
-	fs::{self, File},
 	mem,
 	num::NonZeroU16,
-	sync::Arc,
-	thread,
 	time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::{
+	fs::{self, File},
+	io::AsyncWriteExt,
 };
 use tracing::*;
 
@@ -23,8 +23,8 @@ type Uid = u64;
 
 #[derive(Clone)]
 pub struct VoiceHuntReceiver {
-	sessions: Arc<DashMap<Ssrc, VoiceHuntSession>>,
-	user_map: Arc<DashMap<Uid, Ssrc>>,
+	sessions: DashMap<Ssrc, VoiceHuntSession>,
+	user_map: DashMap<Uid, Ssrc>,
 	rx: Receiver<ReceiverSignal>,
 	tx: Sender<ReceiverSignal>,
 }
@@ -33,8 +33,8 @@ impl VoiceHuntReceiver {
 	pub fn new() -> Self {
 		let (tx, rx) = flume::bounded(1);
 		Self {
-			sessions: Arc::new(Default::default()),
-			user_map: Arc::new(Default::default()),
+			sessions: Default::default(),
+			user_map: Default::default(),
 			rx,
 			tx,
 		}
@@ -62,13 +62,10 @@ impl EventHandler for VoiceHuntReceiver {
 					let _ = self
 						.sessions
 						.entry(s.ssrc)
-						.or_insert_with(|| VoiceHuntSession::new());
+						.or_insert_with(VoiceHuntSession::new);
 
 					if let Some(u_id) = &s.user_id {
-						let _ = self
-							.user_map
-							.entry(u_id.0)
-							.or_insert_with(|| s.ssrc);
+						let _ = self.user_map.entry(u_id.0).or_insert_with(|| s.ssrc);
 					}
 
 					None
@@ -79,13 +76,12 @@ impl EventHandler for VoiceHuntReceiver {
 					payload_offset,
 					payload_end_pad,
 				} => {
-					println!("RTP");
 					let ssrc = packet.ssrc;
 
 					let mut entry = self
 						.sessions
 						.entry(ssrc)
-						.or_insert_with(|| VoiceHuntSession::new());
+						.or_insert_with(VoiceHuntSession::new);
 
 					entry.value_mut().record(
 						packet.timestamp.into(),
@@ -95,15 +91,12 @@ impl EventHandler for VoiceHuntReceiver {
 
 					None
 				},
-				EventContext::RtcpPacket { .. } => {
-					println!("RTCP");
-					None
-				},
+				EventContext::RtcpPacket { .. } => None,
 				EventContext::ClientConnect(s) => {
 					let _ = self
 						.sessions
 						.entry(s.audio_ssrc)
-						.or_insert_with(|| VoiceHuntSession::new());
+						.or_insert_with(VoiceHuntSession::new);
 
 					let _ = self
 						.user_map
@@ -113,9 +106,9 @@ impl EventHandler for VoiceHuntReceiver {
 					None
 				},
 				EventContext::ClientDisconnect(s) => {
-					if let Some((k, v)) = self.user_map.remove(&s.user_id.0) {
-						if let Some((ssrc, sess)) = self.sessions.remove(&v) {
-							finalise_audio_session(sess.clone());
+					if let Some((_k, v)) = self.user_map.remove(&s.user_id.0) {
+						if let Some((_ssrc, sess)) = self.sessions.remove(&v) {
+							finalise_audio_session(sess);
 						}
 					}
 
@@ -185,14 +178,13 @@ impl VoiceHuntSession {
 			let mut replacement = Self::new();
 			mem::swap(&mut self.packets, &mut replacement.packets);
 
-			// mem::swap(self, &mut replacement);
 			finalise_audio_session(replacement);
 		}
 
 		self.packets.push(pkt);
 	}
 
-	fn finalise(&mut self) {
+	async fn finalise(&mut self) {
 		let mut output: Vec<PacketChainLink> = vec![];
 		let mut last_packet: Option<VoicePacketMetadata> = None;
 
@@ -302,11 +294,15 @@ impl VoiceHuntSession {
 		let orig_fname = format!("{}", now.as_secs() * 1000 + u64::from(now.subsec_millis()));
 		let mut fname = orig_fname.clone();
 
-		let _ = fs::create_dir_all(TRACE_DIR);
+		let _ = fs::create_dir_all(TRACE_DIR).await;
 
 		loop {
-			if let Ok(mut file) = File::create(format!("{}{}", TRACE_DIR, fname)) {
-				let _ = bincode::serialize_into(&mut file, &output);
+			if let Ok(mut file) = File::create(format!("{}{}", TRACE_DIR, fname)).await {
+				if let Ok(bytes) = bincode::serialize(&output) {
+					if let Err(e) = file.write_all(&bytes[..]).await {
+						error!("Error serialising trace: {:?}", e);
+					}
+				}
 				break;
 			} else {
 				fname = format!("{}-{}", orig_fname, attempt);
@@ -317,7 +313,9 @@ impl VoiceHuntSession {
 }
 
 fn finalise_audio_session(mut a: VoiceHuntSession) {
-	thread::spawn(move || a.finalise());
+	tokio::spawn(async move {
+		a.finalise().await;
+	});
 }
 
 pub enum ReceiverSignal {

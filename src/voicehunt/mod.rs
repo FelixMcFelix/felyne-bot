@@ -1,24 +1,21 @@
 pub mod receiver;
 
-use crate::{automata::*, constants::*, CachedSound, Resources, RxMap};
-use dashmap::DashMap;
+use crate::{automata::*, constants::*, Resources, RxMap};
 use flume::{self, Receiver, Sender, TryRecvError};
-use rand::{distributions::*, random, thread_rng, Rng};
-use receiver::{listen_in, ReceiverSignal, VoiceHuntReceiver};
+use rand::{distributions::*, thread_rng};
+use receiver::{listen_in, ReceiverSignal};
 use serenity::{async_trait, client::*, model::prelude::*, prelude::*};
 use songbird::{
 	events::{Event, EventContext, EventHandler, TrackEvent},
-	ffmpeg,
 	serenity::SongbirdKey,
-	tracks::{Track, TrackCommand, TrackHandle},
+	tracks::TrackHandle,
 	Call,
-	Songbird,
 };
 use std::{
 	collections::hash_map::{Entry, HashMap},
 	sync::Arc,
 	thread,
-	time::{Duration, Instant},
+	time::Duration,
 };
 use tokio::time;
 use tracing::*;
@@ -277,7 +274,7 @@ impl VHState {
 
 	fn recalc_incumbent(&mut self) {
 		for (chan, count) in self.population_counts.clone().iter() {
-			self.update_incumbent(count.clone(), chan.clone());
+			self.update_incumbent(*count, *chan);
 		}
 	}
 
@@ -319,22 +316,22 @@ impl VHState {
 #[inline]
 async fn quit_vox_channel(
 	manager_lock: Arc<Mutex<Call>>,
-	guild_id: GuildId,
+	_guild_id: GuildId,
 	receiver_chan: &mut Option<Sender<ReceiverSignal>>,
 ) {
 	let mut manager = manager_lock.lock().await;
 
 	manager.stop();
 	if let Some(chan) = receiver_chan {
-		chan.send(ReceiverSignal::Poison);
+		let _ = chan.send(ReceiverSignal::Poison);
 	}
 	*receiver_chan = None;
 
-	manager.leave().await;
+	let _ = manager.leave().await;
 }
 
 #[inline]
-fn random_element<'a, T>(arr: &'a [T]) -> &'a T {
+fn random_element<T>(arr: &[T]) -> &T {
 	let mut rng = thread_rng();
 	&arr[Uniform::new(0, arr.len()).sample(&mut rng)]
 }
@@ -410,7 +407,7 @@ fn play_bgm(
 		.get(random_element(el_list))
 		.map(|guard| vox.play_source(guard.value().into()))
 		.map(move |track| {
-			track.add_event(
+			let _ = track.add_event(
 				Event::Track(TrackEvent::End),
 				FelyneEndTrack {
 					chan,
@@ -428,9 +425,8 @@ struct FelyneEndTrack {
 
 #[async_trait]
 impl EventHandler for FelyneEndTrack {
-	async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
-		self.chan.send(self.msg);
-		println!("Died. Sent a message... {:?}", self.msg);
+	async fn act(&self, _ctx: &EventContext<'_>) -> Option<Event> {
+		let _ = self.chan.send(self.msg);
 		None
 	}
 }
@@ -448,8 +444,6 @@ fn play_sfx(
 		return None;
 	}
 
-	println!("Trying to play... sfx");
-
 	let el_list = match state {
 		NoSfx => {
 			return None;
@@ -464,7 +458,7 @@ fn play_sfx(
 		.get(random_element(el_list))
 		.map(|guard| vox.play_source(guard.value().into()))
 		.map(move |track| {
-			track.add_event(
+			let _ = track.add_event(
 				Event::Track(TrackEvent::End),
 				FelyneEndTrack {
 					chan,
@@ -495,7 +489,6 @@ async fn felyne_life(
 	self_tx: Sender<VoiceHuntMessage>,
 	resources: RxMap,
 ) {
-	println!("In felyne loop");
 	let timer = Duration::from_millis(VOICEHUNT_FRAME_TIME);
 	let vol_range = Uniform::new(0.3, 0.4);
 	let bgm_vol_range = Uniform::new(0.15, 0.2);
@@ -590,7 +583,6 @@ async fn felyne_life(
 	'escape: loop {
 		match rx.try_recv() {
 			Ok(VoiceHuntMessage::Channel(chan, demand)) => {
-				println!("Channel");
 				let new_join = match curr_chan {
 					Some(chan_old) => chan_old != chan,
 					None => true,
@@ -622,7 +614,7 @@ async fn felyne_life(
 								thread::sleep(Duration::from_secs(5));
 								let mut nc = futures::executor::block_on(inner_chan.lock());
 								if let Some(WaitState::Queued(chan)) = *nc {
-									newer_tx.send(VoiceHuntMessage::Channel(chan, false));
+									let _ = newer_tx.send(VoiceHuntMessage::Channel(chan, false));
 								}
 								*nc = None;
 							});
@@ -661,7 +653,7 @@ async fn felyne_life(
 
 						curr_bgm = play_bgm(state, &mut manager, stealthy, &resources, &sound_tx)
 							.map(|track| {
-								track.set_volume(curr_vol);
+								let _ = track.set_volume(curr_vol);
 								track
 							});
 
@@ -670,7 +662,7 @@ async fn felyne_life(
 							curr_sfx =
 								play_sfx(SfxClass::Cat, &mut manager, false, &resources, &sound_tx)
 									.map(|track| {
-										track.set_volume(0.1 * curr_vol);
+										let _ = track.set_volume(0.1 * curr_vol);
 										track
 									});
 						}
@@ -682,32 +674,27 @@ async fn felyne_life(
 				}
 			},
 			Ok(VoiceHuntMessage::NoChannel) => {
-				println!("Leave");
 				quit_vox_channel(manager_lock.clone(), guild_id, &mut receiver_chan).await;
 				curr_chan = None;
 			},
-			Ok(VoiceHuntMessage::Cart) => {
-				println!("Cart");
+			Ok(VoiceHuntMessage::Cart) =>
 				if leaving {
-					println!("About to leave vox.");
 					quit_vox_channel(manager_lock.clone(), guild_id, &mut receiver_chan).await;
 					break 'escape;
 				} else {
 					leaving = true;
 
 					if let Some(track) = curr_sfx.as_ref() {
-						track.pause();
+						let _ = track.pause();
 					}
 
 					curr_sfx = None;
 
 					if let Some(track) = curr_bgm.as_ref() {
-						track.pause();
+						let _ = track.pause();
 					}
 
-					println!("Getting manager...");
 					let mut manager = manager_lock.lock().await;
-					println!("Got manager...");
 
 					let state = bgm_machine
 						.advance(BgmInput::MoveOutro)
@@ -715,24 +702,23 @@ async fn felyne_life(
 
 					curr_bgm = play_bgm(state, &mut manager, stealthy, &resources, &sound_tx).map(
 						|track| {
-							track.set_volume(0.6 * curr_vol);
+							let _ = track.set_volume(0.6 * curr_vol);
 							track
 						},
 					);
-				}
-			},
+				},
 			Ok(VoiceHuntMessage::Volume(new_vol)) => {
 				if let Some(track) = curr_sfx.as_ref() {
-					track.action(move |true_track| {
+					let _ = track.action(move |true_track| {
 						let vol = true_track.volume();
-						true_track.set_volume((vol / curr_vol) * new_vol);
+						let _ = true_track.set_volume((vol / curr_vol) * new_vol);
 					});
 				}
 
 				if let Some(track) = curr_bgm.as_ref() {
-					track.action(move |true_track| {
+					let _ = track.action(move |true_track| {
 						let vol = true_track.volume();
-						true_track.set_volume((vol / curr_vol) * new_vol);
+						let _ = true_track.set_volume((vol / curr_vol) * new_vol);
 					});
 				}
 
@@ -776,7 +762,8 @@ async fn felyne_life(
 									play_sfx(state, &mut manager, stealthy, &resources, &sound_tx)
 										.map(|track| {
 											let mut rng = thread_rng();
-											track.set_volume(vol_range.sample(&mut rng) * curr_vol);
+											let _ = track
+												.set_volume(vol_range.sample(&mut rng) * curr_vol);
 											track
 										});
 							}
@@ -795,7 +782,7 @@ async fn felyne_life(
 											bgm_vol_range.sample(&mut rng)
 										} * curr_vol;
 
-										track.set_volume(vol);
+										let _ = track.set_volume(vol);
 										track
 									},
 								);
@@ -829,8 +816,8 @@ pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHunt
 		.get::<SongbirdKey>()
 		.cloned()
 		.unwrap()
-		.clone()
 		.get_or_insert(guild_id.into());
+
 	let also_vox_lock = voice_manager_lock.clone();
 	let resources = datas
 		.get::<Resources>()
@@ -853,8 +840,8 @@ pub async fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState)
 		.get::<SongbirdKey>()
 		.cloned()
 		.unwrap()
-		.clone()
 		.get_or_insert(guild_id.into());
+
 	let resources = datas
 		.get::<Resources>()
 		.expect("Resources must exists after init...")
@@ -880,8 +867,8 @@ pub async fn voicehunt_complete_update(
 		.get::<SongbirdKey>()
 		.cloned()
 		.unwrap()
-		.clone()
 		.get_or_insert(guild_id.into());
+
 	let resources = datas
 		.get::<Resources>()
 		.expect("Resources must exists after init...")

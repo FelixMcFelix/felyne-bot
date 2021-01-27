@@ -2,6 +2,7 @@ use enum_primitive::*;
 use tokio_postgres::{Error as SqlError, Row};
 
 enum_from_primitive! {
+#[derive(Copy, Clone, Debug)]
 pub enum Label {
 	Unlabelled = 0,
 	Social,
@@ -19,10 +20,10 @@ const LABELS: &[&str] = &[
 ];
 
 impl Label {
-	pub const LabelList: &'static [&'static str] = LABELS;
+	pub const LABEL_LIST: &'static [&'static str] = LABELS;
 
-	pub fn to_str(self) -> Option<&'static str> {
-		LABELS.get(self as usize).map(|a| *a)
+	pub fn to_str(&self) -> Option<&'static str> {
+		LABELS.get(*self as usize).copied()
 	}
 
 	pub fn from_str(label: &str) -> Option<Self> {

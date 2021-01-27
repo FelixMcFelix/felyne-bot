@@ -15,10 +15,10 @@ pub enum GatherMode {
 const GMODES: &[&str] = &["never-gather", "when-active", "always-gather"];
 
 impl GatherMode {
-	pub const LabelList: &'static [&'static str] = GMODES;
+	pub const LABEL_LIST: &'static [&'static str] = GMODES;
 
-	pub fn to_str(self) -> Option<&'static str> {
-		GMODES.get(self as usize).map(|a| *a)
+	pub fn to_str(&self) -> Option<&'static str> {
+		GMODES.get(*self as usize).copied()
 	}
 
 	pub fn from_str(label: &str) -> Option<Self> {
@@ -49,10 +49,10 @@ pub enum OptInOutMode {
 const OMODES: &[&str] = &["server-opt-in", "user-opt-in"];
 
 impl OptInOutMode {
-	pub const LabelList: &'static [&'static str] = OMODES;
+	pub const LABEL_LIST: &'static [&'static str] = OMODES;
 
-	pub fn to_str(self) -> Option<&'static str> {
-		OMODES.get(self as usize).map(|a| *a)
+	pub fn to_str(&self) -> Option<&'static str> {
+		OMODES.get(*self as usize).copied()
 	}
 
 	pub fn from_str(label: &str) -> Option<Self> {
@@ -112,10 +112,10 @@ pub enum ControlMode {
 const CMODES: &[&str] = &["owner", "role", "all"];
 
 impl ControlMode {
-	pub const LabelList: &'static [&'static str] = CMODES;
+	pub const LABEL_LIST: &'static [&'static str] = CMODES;
 
-	pub fn to_str(self) -> Option<&'static str> {
-		CMODES.get(self as usize).map(|a| *a)
+	pub fn to_str(&self) -> Option<&'static str> {
+		CMODES.get(*self as usize).copied()
 	}
 
 	pub fn from_str(label: &str) -> Option<Self> {
