@@ -1,9 +1,15 @@
 use crate::{config::*, server::*};
 use native_tls::TlsConnector;
 use postgres_native_tls::MakeTlsConnector;
-use serenity::model::prelude::*;
+use serenity::{model::prelude::*, prelude::TypeMapKey};
 use tokio_postgres::{Client, Error as SqlError, NoTls, Row};
 use tracing::error;
+
+pub struct Db;
+
+impl TypeMapKey for Db {
+	type Value = Client;
+}
 
 pub async fn init_db_tables(db: &Client) -> Result<(), SqlError> {
 	db.batch_execute(
