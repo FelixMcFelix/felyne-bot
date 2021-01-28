@@ -1,10 +1,4 @@
-use crate::{
-	config::{BotConfig, ConfigParseError, Control as CfgControl, ControlMode},
-	constants::*,
-	dbs::*,
-	voicehunt::*,
-	watchcat::*,
-};
+use crate::constants::*;
 use dashmap::DashMap;
 use serenity::{
 	async_trait,
@@ -30,7 +24,6 @@ use songbird::{
 		Input,
 	},
 	Bitrate,
-	SerenityInit,
 };
 use std::{
 	collections::{HashMap, HashSet},
@@ -40,8 +33,6 @@ use std::{
 	io::prelude::*,
 	sync::Arc,
 };
-use tokio_postgres::Client as DbClient;
-use tracing::*;
 
 pub struct Resources;
 
@@ -66,7 +57,22 @@ impl From<&CachedSound> for Input {
 	}
 }
 
-pub async fn add_resources<'a>(
+pub async fn preload_resources() -> RxMap {
+	let resources = DashMap::new();
+	add_resources(&resources, "bgm", BBQ, false).await;
+	add_resources(&resources, "bgm", BBQ_RESULT, false).await;
+	add_resources(&resources, "bgm", SLEEP, true).await;
+	add_resources(&resources, "bgm", START, true).await;
+	add_resources(&resources, "bgm", AMBIENCE, true).await;
+	add_resources(&resources, "bgm", BGM, true).await;
+
+	add_resources(&resources, "sfx", SFX, false).await;
+	add_resources(&resources, "sfx", BONUS_SFX, false).await;
+
+	Arc::new(resources)
+}
+
+async fn add_resources<'a>(
 	rx: &'a DashMap<&'static str, CachedSound>,
 	folder: &'static str,
 	files: &'static [&'static str],

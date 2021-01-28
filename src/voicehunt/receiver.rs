@@ -71,10 +71,10 @@ impl EventHandler for VoiceHuntReceiver {
 					None
 				},
 				EventContext::VoicePacket {
-					audio,
+					audio: _,
 					packet,
 					payload_offset,
-					payload_end_pad,
+					payload_end_pad: _,
 				} => {
 					let ssrc = packet.ssrc;
 

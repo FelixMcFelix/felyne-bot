@@ -13,6 +13,7 @@ use crate::{
 	audio_resources::*,
 	config::{BotConfig, ConfigParseError, Control as CfgControl, ControlMode},
 	constants::*,
+	constants::*,
 	dbs::*,
 	event_handler::*,
 	voicehunt::*,
@@ -21,7 +22,7 @@ use crate::{
 use dashmap::DashMap;
 use serenity::{
 	async_trait,
-	client::{*, bridge::gateway::GatewayIntents},
+	client::{bridge::gateway::GatewayIntents, *},
 	framework::standard::{
 		macros::{check, command, group, help},
 		Args,
@@ -36,24 +37,15 @@ use serenity::{
 	utils::*,
 	Result as SResult,
 };
-use songbird::{
-	self,
-	input::{
-		cached::{Compressed, Memory},
-		Input,
-	},
-	Bitrate,
-	SerenityInit,
-};
+use songbird::{self, SerenityInit};
 use std::{
 	collections::{HashMap, HashSet},
-	convert::TryInto,
 	env,
 	fs::File,
 	io::prelude::*,
 	sync::Arc,
 };
-use tokio_postgres::Client as DbClient;
+
 use tracing::*;
 
 struct Owners;
@@ -93,7 +85,7 @@ async fn main() {
 	validate_token(&token_raw).expect("Naa nya! (Token invalid!)");
 
 	// Init the Database
-	let mut db = match db_conn(&bot_config.database).await {
+	let db = match db_conn(&bot_config.database).await {
 		Ok(d) => d,
 		Err(e) => {
 			error!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
@@ -126,20 +118,26 @@ async fn main() {
 	// Establish the bot's config, register all our commands...
 	let framework = StandardFramework::new()
 		.configure(|c| {
-			c
-			// .prefix("!")
-			.dynamic_prefix(|ctx, msg| { Box::pin(async move {
-				let datas = ctx.data.read().await;
+			c.prefix("")
+				.dynamic_prefix(|ctx, msg| {
+					Box::pin(async move {
+						let datas = ctx.data.read().await;
 
-				let db = datas.get::<Db>().expect("DB conn installed...");
+						let db = datas.get::<Db>().expect("DB conn installed...");
 
-				Some((if let Some(g_id) = msg.guild(&ctx.cache).await {
-					select_prefix(&db, g_id.id).await.ok()
-				} else {None}).unwrap_or_else(|| "!".to_string()))
-			})})
-			.on_mention(Some(bot_id))
-			.owners(move_owners)
-			.case_insensitivity(true)
+						Some(
+							(if let Some(g_id) = msg.guild(&ctx.cache).await {
+								select_prefix(&db, g_id.id).await.ok()
+							} else {
+								None
+							})
+							.unwrap_or_else(|| "!".to_string()),
+						)
+					})
+				})
+				.on_mention(Some(bot_id))
+				.owners(move_owners)
+				.case_insensitivity(true)
 		})
 		.group(&commands::PUBLIC_GROUP)
 		.group(&commands::CONTROL_GROUP)
@@ -152,7 +150,7 @@ async fn main() {
 		.intents(
 			GatewayIntents::GUILDS
 				| GatewayIntents::GUILD_MESSAGES
-				| GatewayIntents::GUILD_VOICE_STATES, // | GatewayIntents::GUILD_MEMBERS
+				| GatewayIntents::GUILD_VOICE_STATES,
 		)
 		.await;
 
@@ -171,18 +169,7 @@ async fn main() {
 		data.insert::<Db>(db);
 		data.insert::<Owners>(owners);
 
-		let resources = DashMap::new();
-		add_resources(&resources, "bgm", BBQ, false).await;
-		add_resources(&resources, "bgm", BBQ_RESULT, false).await;
-		add_resources(&resources, "bgm", SLEEP, true).await;
-		add_resources(&resources, "bgm", START, true).await;
-		add_resources(&resources, "bgm", AMBIENCE, true).await;
-		add_resources(&resources, "bgm", BGM, true).await;
-
-		add_resources(&resources, "sfx", SFX, false).await;
-		add_resources(&resources, "sfx", BONUS_SFX, false).await;
-
-		data.insert::<Resources>(Arc::new(resources));
+		data.insert::<Resources>(preload_resources().await);
 	}
 
 	// Now, log in.

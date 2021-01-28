@@ -1,8 +1,7 @@
 use crate::{config::*, server::*};
-use native_tls::TlsConnector;
-use postgres_native_tls::MakeTlsConnector;
+
 use serenity::{model::prelude::*, prelude::TypeMapKey};
-use tokio_postgres::{Client, Error as SqlError, NoTls, Row};
+use tokio_postgres::{Client, Error as SqlError, NoTls};
 use tracing::error;
 
 pub struct Db;
@@ -406,5 +405,62 @@ pub async fn upsert_server_type(db: &Client, guild_id: GuildId, label: Label) {
 
 	if let Err(e) = val {
 		error!("Nya?! (Couldn't write server_type db updates.){:?}", e);
+	}
+}
+
+#[inline]
+pub async fn delete_server_type(db: &Client, guild_id: GuildId) {
+	let g_id = guild_id.0 as i64;
+
+	let query = db
+		.prepare(
+			"DELETE FROM server_type WHERE guild_id=$1;",
+		)
+		.await;
+
+	let val = match query {
+		Ok(query) => db.execute(&query, &[&g_id]).await,
+		Err(e) => Err(e),
+	};
+
+	if let Err(e) = val {
+		error!("Nya?! (Couldn't write server_type db updates.){:?}", e);
+	}
+}
+
+#[inline]
+pub async fn upsert_guild_ack(db: &Client, guild_id: GuildId, ack: &str) {
+	let g_id = guild_id.0 as i64;
+
+	let query = db
+		.prepare(
+			"INSERT INTO guild_ack (guild_id, ack_as, used) VALUES ($1,$2,FALSE)
+		ON CONFLICT (guild_id) DO UPDATE SET ack_as=EXCLUDED.ack_as, used=FALSE;",
+		)
+		.await;
+
+	let val = match query {
+		Ok(query) => db.execute(&query, &[&g_id, &ack]).await,
+		Err(e) => Err(e),
+	};
+
+	if let Err(e) = val {
+		error!("Nya?! (Couldn't write guild_ack db updates.){:?}", e);
+	}
+}
+
+#[inline]
+pub async fn delete_guild_ack(db: &Client, guild_id: GuildId) {
+	let g_id = guild_id.0 as i64;
+
+	let query = db.prepare("DELETE FROM guild_ack WHERE guild_id=$1;").await;
+
+	let val = match query {
+		Ok(query) => db.execute(&query, &[&g_id]).await,
+		Err(e) => Err(e),
+	};
+
+	if let Err(e) = val {
+		error!("Nya?! (Couldn't write guild_ack db updates.){:?}", e);
 	}
 }

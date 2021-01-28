@@ -1,5 +1,7 @@
+use crate::config::ConfigParseError;
 use enum_primitive::*;
-use tokio_postgres::{Error as SqlError, Row};
+use serenity::framework::standard::Args;
+use tokio_postgres::Row;
 
 enum_from_primitive! {
 #[derive(Copy, Clone, Debug)]
@@ -37,6 +39,18 @@ impl Label {
 			a if a == LABELS[6] => 6,
 			_ => Label::Other as i16,
 		})
+	}
+
+	pub fn parse(args: &mut Args) -> Result<Option<Self>, ConfigParseError> {
+		if args.is_empty() {
+			return Ok(None);
+		}
+
+		let mode = args
+			.single::<String>()
+			.map_err(|_| ConfigParseError::ArgTake)?;
+
+		Ok(Self::from_str(&mode))
 	}
 }
 

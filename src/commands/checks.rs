@@ -9,7 +9,7 @@ use crate::{
 	voicehunt::*,
 	watchcat::*,
 };
-use dashmap::DashMap;
+
 use serenity::{
 	async_trait,
 	client::*,
@@ -27,15 +27,7 @@ use serenity::{
 	utils::*,
 	Result as SResult,
 };
-use songbird::{
-	self,
-	input::{
-		cached::{Compressed, Memory},
-		Input,
-	},
-	Bitrate,
-	SerenityInit,
-};
+
 use std::{
 	collections::{HashMap, HashSet},
 	convert::TryInto,
@@ -44,8 +36,6 @@ use std::{
 	io::prelude::*,
 	sync::Arc,
 };
-use tokio_postgres::Client as DbClient;
-use tracing::*;
 
 #[check]
 #[name = "Control"]
@@ -63,16 +53,11 @@ pub async fn can_control_cat(
 			)),
 	};
 
-	println!("{:?}", ctx.cache.guilds().await);
-	println!("{:?}", ctx.cache.unavailable_guilds().await);
-
 	let datas = ctx.data.read().await;
 
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
 	let ctl = select_control_cfg(&db, g_id).await.ok().unwrap_or_default();
-
-	println!("Need ctl check: {:?}", ctl);
 
 	let o = match shared_ctl_check(ctl, ctx, msg).await {
 		Err(_e) => can_admin_cat(ctx, msg, args, opts).await,
@@ -107,8 +92,6 @@ pub async fn can_admin_cat(
 		.await
 		.ok()
 		.unwrap_or_default();
-
-	println!("Need admin check: {:?}", ctl);
 
 	shared_ctl_check(ctl, ctx, msg).await
 }
