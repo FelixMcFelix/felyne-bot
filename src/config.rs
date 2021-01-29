@@ -22,7 +22,7 @@ impl GatherMode {
 	}
 
 	pub fn from_str(label: &str) -> Option<Self> {
-		Self::from_i16(match label {
+		Self::from_i32(match label {
 			a if a == GMODES[0] => 0,
 			a if a == GMODES[1] => 1,
 			a if a == GMODES[2] => 2,
@@ -45,7 +45,16 @@ impl GatherMode {
 
 impl From<&Row> for GatherMode {
 	fn from(row: &Row) -> Self {
-		Self::from_i16(row.get(0)).expect("Invalid Db state!")
+		Self::from_i32(row.get(0)).expect("Invalid Db state!")
+	}
+}
+
+impl Default for GatherMode {
+	fn default() -> Self {
+		// NOTE: the default opt-out effectively nullifies this.
+		// this is set like so to make it easier to enable measurement
+		// in one command.
+		Self::GatherActive
 	}
 }
 
@@ -69,7 +78,7 @@ impl OptInOutMode {
 	}
 
 	pub fn from_str(label: &str) -> Option<Self> {
-		Self::from_i16(match label {
+		Self::from_i32(match label {
 			a if a == OMODES[0] => 0,
 			a if a == OMODES[1] => 1,
 			a if a == OMODES[2] => 2,
@@ -86,17 +95,17 @@ pub enum OptInOut {
 }
 
 impl OptInOut {
-	pub fn to_val(self) -> i16 {
+	pub fn to_val(self) -> i32 {
 		(match self {
 			Self::ServerIn => OptInOutMode::ServerIn,
 			Self::UserIn(_) => OptInOutMode::UserIn,
 			Self::ServerOut => OptInOutMode::ServerOut,
-		}) as i16
+		}) as i32
 	}
 
-	pub fn to_role(self) -> Option<String> {
+	pub fn to_role(self) -> Option<i64> {
 		match self {
-			Self::UserIn(a) => Some(a.0.to_string()),
+			Self::UserIn(a) => Some(a.0 as i64),
 			_ => None,
 		}
 	}
@@ -130,11 +139,15 @@ impl OptInOut {
 			None => Err(ConfigParseError::BadMode),
 		}
 	}
+
+	pub fn opted_out(&self) -> bool {
+		matches!(self, Self::ServerOut)
+	}
 }
 
 impl From<&Row> for OptInOut {
 	fn from(row: &Row) -> Self {
-		let mode = OptInOutMode::from_i16(row.get(0)).expect("Invalid Db state!");
+		let mode = OptInOutMode::from_i32(row.get(0)).expect("Invalid Db state!");
 
 		match mode {
 			OptInOutMode::ServerIn => Self::ServerIn,
@@ -144,6 +157,12 @@ impl From<&Row> for OptInOut {
 			},
 			OptInOutMode::ServerOut => Self::ServerOut,
 		}
+	}
+}
+
+impl Default for OptInOut {
+	fn default() -> Self {
+		Self::ServerOut
 	}
 }
 
@@ -166,7 +185,7 @@ impl ControlMode {
 	}
 
 	pub fn from_str(label: &str) -> Option<Self> {
-		Self::from_i16(match label {
+		Self::from_i32(match label {
 			a if a == CMODES[0] => 0,
 			a if a == CMODES[1] => 1,
 			a if a == CMODES[2] => 2,
@@ -183,17 +202,17 @@ pub enum Control {
 }
 
 impl Control {
-	pub fn to_val(self) -> i16 {
+	pub fn to_val(self) -> i32 {
 		(match self {
 			Self::OwnerOnly => ControlMode::OwnerOnly,
 			Self::WithRole(_) => ControlMode::WithRole,
 			Self::All => ControlMode::All,
-		}) as i16
+		}) as i32
 	}
 
-	pub fn to_role(self) -> Option<String> {
+	pub fn to_role(self) -> Option<i64> {
 		match self {
-			Self::WithRole(a) => Some(a.0.to_string()),
+			Self::WithRole(a) => Some(a.0 as i64),
 			_ => None,
 		}
 	}
@@ -231,7 +250,7 @@ impl Control {
 
 impl From<&Row> for Control {
 	fn from(row: &Row) -> Self {
-		let mode = ControlMode::from_i16(row.get(0)).expect("Invalid Db state!");
+		let mode = ControlMode::from_i32(row.get(0)).expect("Invalid Db state!");
 
 		match mode {
 			ControlMode::OwnerOnly => Self::OwnerOnly,

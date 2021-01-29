@@ -1,22 +1,6 @@
 use crate::constants::*;
 use dashmap::DashMap;
-use serenity::{
-	async_trait,
-	client::*,
-	framework::standard::{
-		macros::{check, command, group, help},
-		Args,
-		CommandOptions,
-		CommandResult,
-		Reason as CheckReason,
-		StandardFramework,
-	},
-	http::client::Http,
-	model::prelude::*,
-	prelude::*,
-	utils::*,
-	Result as SResult,
-};
+use serenity::prelude::*;
 use songbird::{
 	self,
 	input::{
@@ -25,14 +9,7 @@ use songbird::{
 	},
 	Bitrate,
 };
-use std::{
-	collections::{HashMap, HashSet},
-	convert::TryInto,
-	env,
-	fs::File,
-	io::prelude::*,
-	sync::Arc,
-};
+use std::{convert::TryInto, sync::Arc};
 
 pub struct Resources;
 

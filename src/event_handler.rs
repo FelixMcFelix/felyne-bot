@@ -1,22 +1,8 @@
-use crate::{voicehunt::*, watchcat::*};
+use crate::{guild::*, voicehunt::*, watchcat::*, Db};
 
-use serenity::{
-	async_trait,
-	client::*,
-	framework::standard::{
-		macros::{check, command, group, help},
-		Args,
-		CommandOptions,
-		CommandResult,
-		Reason as CheckReason,
-		StandardFramework,
-	},
-	http::client::Http,
-	model::prelude::*,
-	prelude::*,
-	utils::*,
-	Result as SResult,
-};
+use serenity::{async_trait, client::*, model::prelude::*};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct FelyneEvts;
 
@@ -68,6 +54,16 @@ impl EventHandler for FelyneEvts {
 	// Should provide us with a set of full guild info as we connect to each!
 	async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: bool) {
 		voicehunt_complete_update(&ctx, guild.id, guild.voice_states).await;
+
+		{
+			let datas = ctx.data.read().await;
+			let db = datas.get::<Db>().unwrap().clone();
+			let states = datas.get::<GuildStates>().unwrap();
+
+			let state = GuildState::new(db, guild.id).await;
+
+			states.insert(guild.id, Arc::new(RwLock::new(state)));
+		}
 	}
 
 	async fn voice_state_update(

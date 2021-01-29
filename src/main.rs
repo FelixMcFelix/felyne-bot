@@ -5,37 +5,26 @@ mod config;
 mod constants;
 mod dbs;
 mod event_handler;
+mod guild;
 mod server;
 mod voicehunt;
 mod watchcat;
 
 use crate::{
 	audio_resources::*,
-	config::{BotConfig, ConfigParseError, Control as CfgControl, ControlMode},
-	constants::*,
-	constants::*,
+	config::BotConfig,
 	dbs::*,
-	event_handler::*,
+	guild::GuildStates,
 	voicehunt::*,
 	watchcat::*,
 };
 use dashmap::DashMap;
 use serenity::{
-	async_trait,
 	client::{bridge::gateway::GatewayIntents, *},
-	framework::standard::{
-		macros::{check, command, group, help},
-		Args,
-		CommandOptions,
-		CommandResult,
-		Reason as CheckReason,
-		StandardFramework,
-	},
+	framework::standard::StandardFramework,
 	http::client::Http,
 	model::prelude::*,
 	prelude::*,
-	utils::*,
-	Result as SResult,
 };
 use songbird::{self, SerenityInit};
 use std::{
@@ -86,7 +75,7 @@ async fn main() {
 
 	// Init the Database
 	let db = match db_conn(&bot_config.database).await {
-		Ok(d) => d,
+		Ok(d) => Arc::new(d),
 		Err(e) => {
 			error!("Nya nya nya?!?! (Couldn't init database: {:?})", e);
 			return;
@@ -121,18 +110,28 @@ async fn main() {
 			c.prefix("")
 				.dynamic_prefix(|ctx, msg| {
 					Box::pin(async move {
-						let datas = ctx.data.read().await;
+						let gs = {
+							let data = ctx.data.read().await;
+							Arc::clone(data.get::<GuildStates>().unwrap())
+						};
 
-						let db = datas.get::<Db>().expect("DB conn installed...");
+						let id = if let Some(guild) = msg.guild(&ctx.cache).await {
+							guild.id
+						} else {
+							return None;
+						};
 
-						Some(
-							(if let Some(g_id) = msg.guild(&ctx.cache).await {
-								select_prefix(&db, g_id.id).await.ok()
-							} else {
-								None
-							})
-							.unwrap_or_else(|| "!".to_string()),
-						)
+						let out = if let Some(state) = gs.get(&id) {
+							let lock = state.read().await;
+							lock.custom_prefix()
+								.as_ref()
+								.cloned()
+								.unwrap_or_else(|| "!".to_string())
+						} else {
+							"!".to_string()
+						};
+
+						Some(out)
 					})
 				})
 				.on_mention(Some(bot_id))
@@ -165,6 +164,7 @@ async fn main() {
 		let mut data = client.data.write().await;
 		data.insert::<DeleteWatchcat>(DashMap::new());
 		data.insert::<VoiceHunt>(HashMap::new());
+		data.insert::<GuildStates>(Default::default());
 
 		data.insert::<Db>(db);
 		data.insert::<Owners>(owners);

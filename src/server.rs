@@ -59,3 +59,9 @@ impl From<&Row> for Label {
 		Self::from_i16(row.get(0)).expect("Invalid Db state!")
 	}
 }
+
+impl Default for Label {
+	fn default() -> Self {
+		Self::Unlabelled
+	}
+}

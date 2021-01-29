@@ -1,41 +1,11 @@
-use super::*;
-
-use crate::{
-	audio_resources::*,
-	config::{BotConfig, ConfigParseError, Control as CfgControl, ControlMode},
-	constants::*,
-	dbs::*,
-	event_handler::*,
-	voicehunt::*,
-	watchcat::*,
-};
+use crate::{config::Control as CfgControl, guild::GuildStates};
 
 use serenity::{
-	async_trait,
 	client::*,
-	framework::standard::{
-		macros::{check, command, group, help},
-		Args,
-		CommandOptions,
-		CommandResult,
-		Reason as CheckReason,
-		StandardFramework,
-	},
-	http::client::Http,
+	framework::standard::{macros::check, Args, CommandOptions, Reason as CheckReason},
 	model::prelude::*,
-	prelude::*,
-	utils::*,
-	Result as SResult,
 };
-
-use std::{
-	collections::{HashMap, HashSet},
-	convert::TryInto,
-	env,
-	fs::File,
-	io::prelude::*,
-	sync::Arc,
-};
+use std::sync::Arc;
 
 #[check]
 #[name = "Control"]
@@ -53,11 +23,17 @@ pub async fn can_control_cat(
 			)),
 	};
 
-	let datas = ctx.data.read().await;
+	let gs = {
+		let data = ctx.data.read().await;
+		Arc::clone(data.get::<GuildStates>().unwrap())
+	};
 
-	let db = datas.get::<Db>().expect("DB conn installed...");
-
-	let ctl = select_control_cfg(&db, g_id).await.ok().unwrap_or_default();
+	let ctl = if let Some(state) = gs.get(&g_id) {
+		let lock = state.read().await;
+		lock.voice_control_mode()
+	} else {
+		Default::default()
+	};
 
 	let o = match shared_ctl_check(ctl, ctx, msg).await {
 		Err(_e) => can_admin_cat(ctx, msg, args, opts).await,
@@ -84,14 +60,17 @@ pub async fn can_admin_cat(
 			)),
 	};
 
-	let datas = ctx.data.read().await;
+	let gs = {
+		let data = ctx.data.read().await;
+		Arc::clone(data.get::<GuildStates>().unwrap())
+	};
 
-	let db = datas.get::<Db>().expect("DB conn installed...");
-
-	let ctl = select_control_admin_cfg(&db, g_id)
-		.await
-		.ok()
-		.unwrap_or_default();
+	let ctl = if let Some(state) = gs.get(&g_id) {
+		let lock = state.read().await;
+		lock.admin_control_mode()
+	} else {
+		Default::default()
+	};
 
 	shared_ctl_check(ctl, ctx, msg).await
 }
@@ -108,10 +87,6 @@ async fn shared_ctl_check(
 			if guild.owner_id == msg.author.id {
 				Ok(())
 			} else {
-				println!(
-					"Not a valid person: {:?} vs {:?}",
-					msg.author.id, guild.owner_id
-				);
 				Err(CheckReason::User("User is not server/bot owner.".into()))
 			}
 		}),

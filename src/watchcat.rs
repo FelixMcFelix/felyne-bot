@@ -2,7 +2,7 @@ use crate::{constants::*, dbs::*, Db};
 use dashmap::DashMap;
 use rand::random;
 use serenity::{client::*, model::prelude::*, prelude::*, utils::*};
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::*;
 
@@ -42,74 +42,16 @@ impl AttachmentHolder {
 	}
 }
 
-pub struct CircQueue<T> {
-	data: Box<[Option<T>]>,
-	base: usize,
-	len: usize,
-}
-
-impl<T: Clone> CircQueue<T> {
-	fn new(size: usize) -> Self {
-		CircQueue {
-			data: vec![None; size].into_boxed_slice(),
-			base: 0,
-			len: 0,
-		}
-	}
-
-	fn add_and_march(&mut self, element: T) {
-		if self.len == self.data.len() {
-			self.base = wrap(self.base, 1, &self.data);
-		} else {
-			self.len += 1;
-		}
-
-		self.data[wrap(self.base, self.len - 1, &self.data)] = Some(element);
-	}
-
-	fn head(&self) -> &Option<T> {
-		&self.data[self.base]
-	}
-
-	fn tail(&self) -> &Option<T> {
-		&self.data[wrap(self.base, self.data.len().max(1) - 1, &self.data)]
-	}
-
-	fn get(&self, index: usize) -> &Option<T> {
-		if index < self.data.len() {
-			&self.data[wrap(self.base, index, &self.data)]
-		} else {
-			&None
-		}
-	}
-
-	// fn as_slice(&self) -> &[Option<T>] {
-	//  let tail_pos = wrap(self.base, self.data.len()-1, &self.data);
-	//  match tail_pos < self.base {
-	//      false => &self.data[self.base..tail_pos],
-	//      true => [
-	//              &self.data[self.base..self.data.len()-1],
-	//              &self.data[0..tail_pos],
-	//          ].concat(),
-	//  }
-	// }
-}
-
-#[inline]
-fn wrap<T>(position: usize, increment: usize, buf: &[T]) -> usize {
-	(position + increment) % buf.len()
-}
-
 pub struct GuildDeleteData {
 	output_channel: Option<ChannelId>,
-	backup: CircQueue<(Box<Message>, AttachmentHolder)>,
+	backup: VecDeque<(Box<Message>, AttachmentHolder)>,
 }
 
 impl GuildDeleteData {
 	fn new(output_channel: Option<ChannelId>) -> Self {
 		GuildDeleteData {
 			output_channel,
-			backup: CircQueue::new(BACKUP_SIZE),
+			backup: VecDeque::with_capacity(BACKUP_SIZE),
 		}
 	}
 }
@@ -173,7 +115,10 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 			let mut m = msg.clone();
 			let attachments = AttachmentHolder::new(&mut m.attachments);
 			let mut top_dog = top_do.write().await;
-			top_dog.backup.add_and_march((m, attachments));
+			if top_dog.backup.len() == top_dog.backup.capacity() {
+				top_dog.backup.pop_front();
+			}
+			top_dog.backup.push_back((m, attachments));
 		},
 	}
 }
@@ -181,7 +126,7 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 async fn report_delete(
 	delete_data: &GuildDeleteData,
 	chan: ChannelId,
-	msg: MessageId,
+	removed_msg: MessageId,
 	ctx: &Context,
 ) {
 	if let Some(out_channel) = delete_data.output_channel {
@@ -191,21 +136,6 @@ async fn report_delete(
 		}
 		// Try to find it!
 		let msgs = &delete_data.backup;
-		let len = delete_data.backup.len;
-		let mut curr = 0;
-
-		let mut msg_full = None;
-		while curr < len {
-			let s = msgs.get(curr);
-			match s {
-				Some(ref message) =>
-					if message.0.id == msg {
-						msg_full = Some(message);
-					},
-				None => info!("{}: None", curr),
-			}
-			curr += 1;
-		}
 
 		let mut content = String::from("Hiss... (I couldn't find what it was?!)");
 		let mut author_img = String::new();
@@ -213,7 +143,9 @@ async fn report_delete(
 		let mut author_mention = String::from("Unknyown author");
 		let mut attachment_text = String::new();
 
-		if let Some((message, attachments_holder)) = msg_full {
+		let recovered = msgs.iter().find(|message| message.0.id == removed_msg);
+
+		if let Some((message, attachments_holder)) = recovered {
 			content = message.content_safe(&ctx.cache).await;
 
 			attachment_text = match attachments_holder.store.len() {
@@ -246,7 +178,7 @@ async fn report_delete(
 						.footer(|f| {
 							f.text(format!(
 								"ID: {}. Nyarowr... (I think that {} has it...)",
-								msg,
+								removed_msg,
 								MONSTERS[random::<usize>() % MONSTERS.len()]
 							))
 						});
@@ -266,7 +198,7 @@ async fn report_delete(
 			},
 		}
 
-		if let Some(message) = msg_full {
+		if let Some(message) = recovered {
 			for (i, (name, locked_maybe_file)) in message.1.store.iter().enumerate() {
 				let maybe_file = locked_maybe_file.lock().await;
 				match *maybe_file {

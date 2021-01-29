@@ -1,4 +1,3 @@
-pub const MANAGE_ROLES: &[&str] = &["certified cat wrangler"];
 pub const MONSTERS: &[&str] = &[
 	"Jaggi",
 	"Nargacuga",

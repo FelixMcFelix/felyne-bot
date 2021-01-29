@@ -5,25 +5,9 @@ mod info;
 mod opt;
 mod utils;
 
-use self::{admin::*, cat_control::*, checks::*, info::*, opt::*, utils::*};
+use self::{admin::*, cat_control::*, checks::*, info::*, utils::*};
 
-use serenity::{
-	async_trait,
-	client::*,
-	framework::standard::{
-		macros::{check, command, group, help},
-		Args,
-		CommandOptions,
-		CommandResult,
-		Reason as CheckReason,
-		StandardFramework,
-	},
-	http::client::Http,
-	model::prelude::*,
-	prelude::*,
-	utils::*,
-	Result as SResult,
-};
+use serenity::framework::standard::macros::{group, help};
 
 #[group]
 #[commands(github, ids)]
@@ -39,6 +23,7 @@ struct Control;
 #[checks(Admin)]
 #[owner_privilege]
 #[commands(
+	see_config,
 	log_to,
 	felyne_prefix,
 	admin_ctl_mode,

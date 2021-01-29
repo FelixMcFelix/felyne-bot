@@ -1,13 +1,14 @@
 use crate::{config::*, server::*};
 
 use serenity::{model::prelude::*, prelude::TypeMapKey};
+use std::sync::Arc;
 use tokio_postgres::{Client, Error as SqlError, NoTls};
 use tracing::error;
 
 pub struct Db;
 
 impl TypeMapKey for Db {
-	type Value = Client;
+	type Value = Arc<Client>;
 }
 
 pub async fn init_db_tables(db: &Client) -> Result<(), SqlError> {
@@ -254,7 +255,7 @@ pub async fn upsert_gather_cfg(db: &Client, guild_id: GuildId, mode: GatherMode)
 		.await;
 
 	let val = match query {
-		Ok(query) => db.execute(&query, &[&g_id, &(mode as i16)]).await,
+		Ok(query) => db.execute(&query, &[&g_id, &(mode as i32)]).await,
 		Err(e) => Err(e),
 	};
 
@@ -289,8 +290,11 @@ pub async fn upsert_control_cfg(db: &Client, guild_id: GuildId, mode: Control) {
 
 	let val = match query {
 		Ok(query) =>
-			db.execute(&query, &[&g_id, &(mode.to_val()), &(mode.to_role())])
-				.await,
+			db.execute(
+				&query,
+				&[&g_id, &(mode.to_val()), &(mode.to_role().unwrap_or(0i64))],
+			)
+			.await,
 		Err(e) => Err(e),
 	};
 
@@ -325,8 +329,11 @@ pub async fn upsert_control_admin_cfg(db: &Client, guild_id: GuildId, mode: Cont
 
 	let val = match query {
 		Ok(query) =>
-			db.execute(&query, &[&g_id, &(mode.to_val()), &(mode.to_role())])
-				.await,
+			db.execute(
+				&query,
+				&[&g_id, &(mode.to_val()), &(mode.to_role().unwrap_or(0))],
+			)
+			.await,
 		Err(e) => Err(e),
 	};
 
@@ -343,7 +350,7 @@ pub async fn select_opt_in_out(db: &Client, guild_id: GuildId) -> Result<OptInOu
 	let g_id = guild_id.0 as i64;
 
 	let query = db
-		.prepare("SELECT mode, role FROM opt_in_out WHERE guild_id = $1")
+		.prepare("SELECT mode, role_id FROM opt_in_out WHERE guild_id = $1")
 		.await?;
 
 	db.query_one(&query, &[&g_id])
@@ -357,15 +364,18 @@ pub async fn upsert_opt_in_out(db: &Client, guild_id: GuildId, mode: OptInOut) {
 
 	let query = db
 		.prepare(
-			"INSERT INTO opt_in_out (guild_id, mode, role) VALUES ($1,$2,$3)
-		ON CONFLICT (guild_id) DO UPDATE SET mode=EXCLUDED.mode, role=EXCLUDED.role;",
+			"INSERT INTO opt_in_out (guild_id, mode, role_id) VALUES ($1,$2,$3)
+		ON CONFLICT (guild_id) DO UPDATE SET mode=EXCLUDED.mode, role_id=EXCLUDED.role_id;",
 		)
 		.await;
 
 	let val = match query {
 		Ok(query) =>
-			db.execute(&query, &[&g_id, &(mode.to_val()), &(mode.to_role())])
-				.await,
+			db.execute(
+				&query,
+				&[&g_id, &(mode.to_val()), &(mode.to_role().unwrap_or(0i64))],
+			)
+			.await,
 		Err(e) => Err(e),
 	};
 
@@ -399,7 +409,7 @@ pub async fn upsert_server_type(db: &Client, guild_id: GuildId, label: Label) {
 		.await;
 
 	let val = match query {
-		Ok(query) => db.execute(&query, &[&g_id, &(label as i16)]).await,
+		Ok(query) => db.execute(&query, &[&g_id, &(label as i32)]).await,
 		Err(e) => Err(e),
 	};
 
@@ -413,9 +423,7 @@ pub async fn delete_server_type(db: &Client, guild_id: GuildId) {
 	let g_id = guild_id.0 as i64;
 
 	let query = db
-		.prepare(
-			"DELETE FROM server_type WHERE guild_id=$1;",
-		)
+		.prepare("DELETE FROM server_type WHERE guild_id=$1;")
 		.await;
 
 	let val = match query {
@@ -426,6 +434,19 @@ pub async fn delete_server_type(db: &Client, guild_id: GuildId) {
 	if let Err(e) = val {
 		error!("Nya?! (Couldn't write server_type db updates.){:?}", e);
 	}
+}
+
+#[inline]
+pub async fn select_guild_ack(db: &Client, guild_id: GuildId) -> Result<String, SqlError> {
+	let g_id = guild_id.0 as i64;
+
+	let query = db
+		.prepare("SELECT ack_as FROM guild_ack WHERE guild_id = $1")
+		.await?;
+
+	db.query_one(&query, &[&g_id])
+		.await
+		.map(move |row| row.get(1))
 }
 
 #[inline]
