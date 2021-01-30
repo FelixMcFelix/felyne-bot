@@ -196,16 +196,16 @@ pub async fn upsert_prefix(db: &Client, guild_id: GuildId, prefix: &str) {
 }
 
 #[inline]
-pub async fn select_optout(db: &Client, user_id: UserId) -> Result<UserId, SqlError> {
-	let u_id = user_id.0 as i64;
+pub async fn select_optout_users(db: &Client) -> Result<Vec<UserId>, SqlError> {
+	let query = db.prepare("SELECT user_id FROM user_optout").await?;
 
-	let query = db
-		.prepare("SELECT user_id FROM user_optout WHERE user_id = $1")
-		.await?;
-
-	db.query_one(&query, &[&u_id]).await.map(move |row| {
-		let a: i64 = row.get(0);
-		UserId(a as u64)
+	db.query(&query, &[]).await.map(move |rows| {
+		rows.into_iter()
+			.map(|row| {
+				let a: i64 = row.get(0);
+				UserId(a as u64)
+			})
+			.collect()
 	})
 }
 
@@ -227,6 +227,24 @@ pub async fn upsert_optout(db: &Client, user_id: UserId) {
 
 	if let Err(e) = val {
 		error!("Nya?! (Couldn't write user_optout db updates.){:?}", e);
+	}
+}
+
+#[inline]
+pub async fn delete_optout(db: &Client, user_id: UserId) {
+	let u_id = user_id.0 as i64;
+
+	let query = db
+		.prepare("DELETE FROM user_optout WHERE user_id=$1;")
+		.await;
+
+	let val = match query {
+		Ok(query) => db.execute(&query, &[&u_id]).await,
+		Err(e) => Err(e),
+	};
+
+	if let Err(e) = val {
+		error!("Nya?! (Couldn't write user_optout db removal.){:?}", e);
 	}
 }
 
@@ -483,5 +501,42 @@ pub async fn delete_guild_ack(db: &Client, guild_id: GuildId) {
 
 	if let Err(e) = val {
 		error!("Nya?! (Couldn't write guild_ack db updates.){:?}", e);
+	}
+}
+
+#[inline]
+pub async fn upsert_user_ack(db: &Client, user_id: UserId, ack: &str) {
+	let g_id = user_id.0 as i64;
+
+	let query = db
+		.prepare(
+			"INSERT INTO user_ack (user_id, ack_as, used) VALUES ($1,$2,FALSE)
+		ON CONFLICT (user_id) DO UPDATE SET ack_as=EXCLUDED.ack_as, used=FALSE;",
+		)
+		.await;
+
+	let val = match query {
+		Ok(query) => db.execute(&query, &[&g_id, &ack]).await,
+		Err(e) => Err(e),
+	};
+
+	if let Err(e) = val {
+		error!("Nya?! (Couldn't write user_ack db updates.){:?}", e);
+	}
+}
+
+#[inline]
+pub async fn delete_user_ack(db: &Client, user_id: UserId) {
+	let g_id = user_id.0 as i64;
+
+	let query = db.prepare("DELETE FROM user_ack WHERE user_id=$1;").await;
+
+	let val = match query {
+		Ok(query) => db.execute(&query, &[&g_id]).await,
+		Err(e) => Err(e),
+	};
+
+	if let Err(e) = val {
+		error!("Nya?! (Couldn't write user_ack db updates.){:?}", e);
 	}
 }

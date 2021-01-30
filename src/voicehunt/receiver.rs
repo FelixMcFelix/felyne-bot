@@ -1,8 +1,12 @@
-use crate::constants::TRACE_DIR;
+use crate::{
+	config::{GatherMode, OptInOut},
+	constants::TRACE_DIR,
+	user::UserState,
+};
 use dashmap::DashMap;
 use flume::{Receiver, Sender, TryRecvError};
 use serde::{Deserialize, Serialize};
-use serenity::async_trait;
+use serenity::{async_trait, client::Context, model::prelude::GuildId};
 use songbird::{
 	events::{CoreEvent, Event, EventContext, EventHandler},
 	Call,
@@ -10,6 +14,10 @@ use songbird::{
 use std::{
 	mem,
 	num::NonZeroU16,
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		Arc,
+	},
 	time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -27,24 +35,78 @@ pub struct VoiceHuntReceiver {
 	user_map: DashMap<Uid, Ssrc>,
 	rx: Receiver<ReceiverSignal>,
 	tx: Sender<ReceiverSignal>,
+
+	never_act: Arc<AtomicBool>,
+	do_nothing: Arc<AtomicBool>,
+	gather_mode: GatherMode,
+	user_states: Arc<UserState>,
+	guild_id: GuildId,
+	ctx: Context,
 }
 
 impl VoiceHuntReceiver {
-	pub fn new() -> Self {
+	pub fn new(
+		opt_in: OptInOut,
+		gather_mode: GatherMode,
+		user_states: Arc<UserState>,
+		guild_id: GuildId,
+		making_noise: bool,
+		ctx: Context,
+	) -> Self {
 		let (tx, rx) = flume::bounded(1);
+
+		let never_act = opt_in.opted_out();
+		let prevent = match gather_mode {
+			GatherMode::NeverGather => true,
+			GatherMode::AlwaysGather => false,
+			GatherMode::GatherActive => !making_noise,
+		};
+		let do_nothing = Arc::new((never_act || prevent).into());
+
 		Self {
 			sessions: Default::default(),
 			user_map: Default::default(),
 			rx,
 			tx,
+
+			never_act: Arc::new(never_act.into()),
+			do_nothing,
+			gather_mode,
+			user_states,
+			guild_id,
+			ctx,
 		}
 	}
 
-	fn try_read_poison(&self) -> bool {
+	fn handle_possible_cancel(&self) -> bool {
 		match self.rx.try_recv() {
 			Ok(ReceiverSignal::Poison) | Err(TryRecvError::Disconnected) => {
 				let _ = self.tx.send(ReceiverSignal::Poison);
 				true
+			},
+			Ok(ReceiverSignal::Active) => {
+				let never_act = self.never_act.load(Ordering::Relaxed);
+				let prevent = match self.gather_mode {
+					GatherMode::NeverGather => true,
+					_ => false,
+				};
+
+				self.do_nothing
+					.store(never_act || prevent, Ordering::Relaxed);
+
+				false
+			},
+			Ok(ReceiverSignal::Inactive) => {
+				let never_act = self.never_act.load(Ordering::Relaxed);
+				let prevent = match self.gather_mode {
+					GatherMode::AlwaysGather => false,
+					_ => true,
+				};
+
+				self.do_nothing
+					.store(never_act || prevent, Ordering::Relaxed);
+
+				false
 			},
 			Err(TryRecvError::Empty) => false,
 		}
@@ -54,9 +116,13 @@ impl VoiceHuntReceiver {
 #[async_trait]
 impl EventHandler for VoiceHuntReceiver {
 	async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
-		if self.try_read_poison() {
+		if self.handle_possible_cancel() {
 			Some(Event::Cancel)
 		} else {
+			if self.do_nothing.load(Ordering::Relaxed) {
+				return None;
+			}
+
 			match ctx {
 				EventContext::SpeakingStateUpdate(s) => {
 					let _ = self
@@ -319,11 +385,28 @@ fn finalise_audio_session(mut a: VoiceHuntSession) {
 }
 
 pub enum ReceiverSignal {
+	Active,
+	Inactive,
 	Poison,
 }
 
-pub fn listen_in(handler: &mut Call) -> Sender<ReceiverSignal> {
-	let vhr = VoiceHuntReceiver::new();
+pub fn listen_in(
+	handler: &mut Call,
+	opt_in: OptInOut,
+	gather_mode: GatherMode,
+	user_states: Arc<UserState>,
+	guild_id: GuildId,
+	making_noise: bool,
+	ctx: Context,
+) -> Sender<ReceiverSignal> {
+	let vhr = VoiceHuntReceiver::new(
+		opt_in,
+		gather_mode,
+		user_states,
+		guild_id,
+		making_noise,
+		ctx,
+	);
 	let out_tx = vhr.tx.clone();
 
 	let n_vhr = vhr.clone();

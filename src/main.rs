@@ -7,6 +7,7 @@ mod dbs;
 mod event_handler;
 mod guild;
 mod server;
+mod user;
 mod voicehunt;
 mod watchcat;
 
@@ -15,6 +16,7 @@ use crate::{
 	config::BotConfig,
 	dbs::*,
 	guild::GuildStates,
+	user::*,
 	voicehunt::*,
 	watchcat::*,
 };
@@ -138,9 +140,10 @@ async fn main() {
 				.owners(move_owners)
 				.case_insensitivity(true)
 		})
-		.group(&commands::PUBLIC_GROUP)
+		.group(&commands::EVERYONE_GROUP)
 		.group(&commands::CONTROL_GROUP)
-		.group(&commands::ADMIN_GROUP);
+		.group(&commands::ADMIN_GROUP)
+		.help(&commands::MY_HELP);
 
 	let client = Client::builder(&token_raw)
 		.event_handler(event_handler::FelyneEvts)
@@ -165,6 +168,7 @@ async fn main() {
 		data.insert::<DeleteWatchcat>(DashMap::new());
 		data.insert::<VoiceHunt>(HashMap::new());
 		data.insert::<GuildStates>(Default::default());
+		data.insert::<UserStateKey>(Arc::new(UserState::new(db.clone()).await));
 
 		data.insert::<Db>(db);
 		data.insert::<Owners>(owners);

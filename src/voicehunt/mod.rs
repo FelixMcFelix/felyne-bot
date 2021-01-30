@@ -1,6 +1,6 @@
 pub mod receiver;
 
-use crate::{automata::*, constants::*, Resources, RxMap};
+use crate::{automata::*, constants::*, guild::*, user::*, Resources, RxMap};
 use flume::{self, Receiver, Sender, TryRecvError};
 use rand::{distributions::*, thread_rng};
 use receiver::{listen_in, ReceiverSignal};
@@ -76,6 +76,9 @@ impl VHState {
 		user_id: UserId,
 		vox_manager: Arc<Mutex<Call>>,
 		resources: RxMap,
+		ctx: &Context,
+		guild_state: &Arc<RwLock<GuildState>>,
+		user_states: &Arc<UserState>,
 	) -> Self {
 		// NOTE: will need some further changes if I want to start
 		// in the Stalk or BraveHunt states...
@@ -95,12 +98,26 @@ impl VHState {
 			huntsim_rx: None,
 		};
 
-		out.control(vox_manager, VoiceHuntCommand::Stalk, resources);
+		out.control(
+			vox_manager,
+			VoiceHuntCommand::Stalk,
+			resources,
+			ctx,
+			guild_state,
+			user_states,
+		);
 
 		out
 	}
 
-	fn launch_felyne_thread(&mut self, vox_manager: Arc<Mutex<Call>>, resources: RxMap) {
+	fn launch_felyne_thread(
+		&mut self,
+		vox_manager: Arc<Mutex<Call>>,
+		resources: RxMap,
+		guild_state: Arc<RwLock<GuildState>>,
+		user_states: Arc<UserState>,
+		ctx: Context,
+	) {
 		let (sender, receiver) = flume::unbounded();
 		let (reverse_sender, reverse_receiver) = flume::unbounded();
 		let guild_id = self.guild_id;
@@ -119,6 +136,9 @@ impl VHState {
 				vol,
 				self_tx,
 				resources,
+				guild_state,
+				user_states,
+				ctx,
 			)
 			.await;
 		});
@@ -132,6 +152,9 @@ impl VHState {
 		vox_manager: Arc<Mutex<Call>>,
 		mode: VoiceHuntCommand,
 		resources: RxMap,
+		ctx: &Context,
+		guild_state: &Arc<RwLock<GuildState>>,
+		user_states: &Arc<UserState>,
 	) -> &mut Self {
 		// Note: we can read from the ShareMap because entrant code is guaranteed to have the lock.
 		use crate::VoiceHuntCommand::*;
@@ -143,7 +166,13 @@ impl VHState {
 				_ => {
 					// Moving from Carted to active mode.
 					// Spawn thread.
-					self.launch_felyne_thread(vox_manager, resources);
+					self.launch_felyne_thread(
+						vox_manager,
+						resources,
+						guild_state.clone(),
+						user_states.clone(),
+						ctx.clone(),
+					);
 				},
 			}
 		}
@@ -387,8 +416,6 @@ fn play_bgm(
 		return None;
 	}
 
-	println!("Trying to play...");
-
 	let el_list = match state {
 		NoBgm => {
 			return None;
@@ -488,6 +515,9 @@ async fn felyne_life(
 	vol: f32,
 	self_tx: Sender<VoiceHuntMessage>,
 	resources: RxMap,
+	guild_state: Arc<RwLock<GuildState>>,
+	user_states: Arc<UserState>,
+	ctx: Context,
 ) {
 	let timer = Duration::from_millis(VOICEHUNT_FRAME_TIME);
 	let vol_range = Uniform::new(0.3, 0.4);
@@ -632,9 +662,21 @@ async fn felyne_life(
 					if manager.join(chan.into()).await.is_ok() {
 						// test play
 						manager.stop();
-						// Testing voice receive---example 10.
-						// GOAL: ducking!
-						receiver_chan = Some(listen_in(&mut manager));
+
+						let (opt_in, gather_mode) = {
+							let lock = guild_state.read().await;
+							(lock.server_opt(), lock.gather())
+						};
+
+						receiver_chan = Some(listen_in(
+							&mut manager,
+							opt_in,
+							gather_mode,
+							user_states.clone(),
+							guild_id,
+							!stealthy,
+							ctx.clone(),
+						));
 
 						let state = if let Some(s) = bgm_machine.advance(BgmInput::TryIntro) {
 							sfx_machine.cause_cooldown(
@@ -726,9 +768,15 @@ async fn felyne_life(
 			},
 			Ok(VoiceHuntMessage::Stealth) => {
 				stealthy = true;
+				if let Some(chan) = &receiver_chan {
+					let _ = chan.send(ReceiverSignal::Inactive);
+				}
 			},
 			Ok(VoiceHuntMessage::Unstealth) => {
 				stealthy = false;
+				if let Some(chan) = &receiver_chan {
+					let _ = chan.send(ReceiverSignal::Active);
+				}
 			},
 			Err(TryRecvError::Empty) => {
 				// If we receieved nothing, then we can perform an update.
@@ -826,12 +874,41 @@ pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHunt
 
 	let u_id = ctx.cache.current_user_id().await;
 
+	let guild_state = datas
+		.get::<GuildStates>()
+		.expect("Resources must exists after init...")
+		.get(&guild_id)
+		.expect("Tried to act on a guild I haven't yet installed!")
+		.clone();
+
+	let user_states = datas
+		.get::<UserStateKey>()
+		.expect("Resources must exists after init...")
+		.clone();
+
 	datas
 		.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, u_id, also_vox_lock, resources.clone()))
-		.control(voice_manager_lock, mode, resources);
+		.or_insert_with(|| {
+			VHState::new(
+				guild_id,
+				u_id,
+				also_vox_lock,
+				resources.clone(),
+				ctx,
+				&guild_state,
+				&user_states,
+			)
+		})
+		.control(
+			voice_manager_lock,
+			mode,
+			resources,
+			ctx,
+			&guild_state,
+			&user_states,
+		);
 }
 
 pub async fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
@@ -849,11 +926,33 @@ pub async fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState)
 
 	let u_id = ctx.cache.current_user_id().await;
 
+	let guild_state = datas
+		.get::<GuildStates>()
+		.expect("Resources must exists after init...")
+		.get(&guild_id)
+		.expect("Tried to act on a guild I haven't yet installed!")
+		.clone();
+
+	let user_states = datas
+		.get::<UserStateKey>()
+		.expect("Resources must exists after init...")
+		.clone();
+
 	datas
 		.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, u_id, voice_manager_lock, resources))
+		.or_insert_with(|| {
+			VHState::new(
+				guild_id,
+				u_id,
+				voice_manager_lock,
+				resources,
+				ctx,
+				&guild_state,
+				&user_states,
+			)
+		})
 		.register_user_state(&vox, true);
 }
 
@@ -876,10 +975,32 @@ pub async fn voicehunt_complete_update(
 
 	let u_id = ctx.cache.current_user_id().await;
 
+	let guild_state = datas
+		.get::<GuildStates>()
+		.expect("Resources must exists after init...")
+		.get(&guild_id)
+		.expect("Tried to act on a guild I haven't yet installed!")
+		.clone();
+
+	let user_states = datas
+		.get::<UserStateKey>()
+		.expect("Resources must exists after init...")
+		.clone();
+
 	datas
 		.get_mut::<VoiceHunt>()
 		.unwrap()
 		.entry(guild_id)
-		.or_insert_with(|| VHState::new(guild_id, u_id, voice_manager_lock, resources.clone()))
+		.or_insert_with(|| {
+			VHState::new(
+				guild_id,
+				u_id,
+				voice_manager_lock,
+				resources,
+				ctx,
+				&guild_state,
+				&user_states,
+			)
+		})
 		.register_user_states(voice_states);
 }

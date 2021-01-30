@@ -53,8 +53,6 @@ impl EventHandler for FelyneEvts {
 
 	// Should provide us with a set of full guild info as we connect to each!
 	async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: bool) {
-		voicehunt_complete_update(&ctx, guild.id, guild.voice_states).await;
-
 		{
 			let datas = ctx.data.read().await;
 			let db = datas.get::<Db>().unwrap().clone();
@@ -64,6 +62,8 @@ impl EventHandler for FelyneEvts {
 
 			states.insert(guild.id, Arc::new(RwLock::new(state)));
 		}
+
+		voicehunt_complete_update(&ctx, guild.id, guild.voice_states).await;
 	}
 
 	async fn voice_state_update(

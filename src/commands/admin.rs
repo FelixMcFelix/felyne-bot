@@ -16,18 +16,14 @@ use crate::{
 
 use serenity::{
 	client::*,
-	framework::standard::{
-		macros::{command, help},
-		Args,
-		CommandResult,
-	},
+	framework::standard::{macros::command, Args, CommandResult},
 	model::prelude::*,
 };
-
 use std::sync::Arc;
 
 #[command]
 #[aliases("see-config")]
+#[description = "Nya! (See all the ways I'm acting for this server!)"]
 #[owner_privilege]
 pub async fn see_config(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	let guild = match msg.guild(&ctx.cache).await {
@@ -56,6 +52,7 @@ pub async fn see_config(ctx: &Context, msg: &Message, _args: Args) -> CommandRes
 
 #[command]
 #[aliases("log-to")]
+#[description = "Mrowr... (Tell me where to stash any mail that goes missing...)"]
 #[owner_privilege]
 pub async fn log_to(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	let out_chan = parse_chan_mention(&mut args);
@@ -87,6 +84,7 @@ pub async fn log_to(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
 
 #[command]
 #[aliases("felyne-prefix")]
+#[description = "Nrowr? (How should I know that folks want to talk to me?)"]
 #[owner_privilege]
 pub async fn felyne_prefix(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	let new_prefix = args.single::<String>();
@@ -129,6 +127,7 @@ pub async fn felyne_prefix(ctx: &Context, msg: &Message, mut args: Args) -> Comm
 
 #[command]
 #[aliases("admin-ctl-mode")]
+#[description = "Mrrewr? (Who gets to boss me around, all the time?)"]
 #[owner_privilege]
 pub async fn admin_ctl_mode(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
 	ctl_mode_basis(ctx, msg, args, true).await
@@ -136,6 +135,7 @@ pub async fn admin_ctl_mode(ctx: &Context, msg: &Message, args: Args) -> Command
 
 #[command]
 #[aliases("ctl-mode")]
+#[description = "Mrrewr? (Who gets to tell me when to hunt?)"]
 #[owner_privilege]
 pub async fn ctl_mode(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
 	ctl_mode_basis(ctx, msg, args, false).await
@@ -213,6 +213,7 @@ async fn ctl_mode_basis(
 
 #[command]
 #[aliases("server-opt")]
+#[description = "Mrrewr? (Do you want me to help model how people talk?)"]
 #[owner_privilege]
 pub async fn server_opt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	match OptInOut::parse(&mut args) {
@@ -267,6 +268,7 @@ pub async fn server_opt(ctx: &Context, msg: &Message, mut args: Args) -> Command
 
 #[command]
 #[aliases("server-ack")]
+#[description = "Mraww? (If I'm measuring how folks talk, should I credit this place?)"]
 #[owner_privilege]
 pub async fn server_ack(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
 	if let Some(g_id) = msg.guild_id {
@@ -301,6 +303,7 @@ pub async fn server_ack(ctx: &Context, msg: &Message, args: Args) -> CommandResu
 
 #[command]
 #[aliases("remove-server-ack")]
+#[description = "Mya!? (You don't want to be credited anymore?)"]
 #[owner_privilege]
 pub async fn remove_server_ack(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	if let Some(g_id) = msg.guild_id {
@@ -326,6 +329,7 @@ pub async fn remove_server_ack(ctx: &Context, msg: &Message, _args: Args) -> Com
 
 #[command]
 #[aliases("server-label")]
+#[description = "Mraww? (If I'm measuring how folks talk, what kinda place is this?)"]
 #[owner_privilege]
 pub async fn server_label(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	match Label::parse(&mut args) {
@@ -380,6 +384,7 @@ pub async fn server_label(ctx: &Context, msg: &Message, mut args: Args) -> Comma
 
 #[command]
 #[aliases("server-unlabel")]
+#[description = "Mya!? (You want me to forget what kinda place this server is?)"]
 #[owner_privilege]
 pub async fn server_unlabel(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	let guild = match msg.guild(&ctx.cache).await {
@@ -404,6 +409,7 @@ pub async fn server_unlabel(ctx: &Context, msg: &Message, _args: Args) -> Comman
 
 #[command]
 #[aliases("gather-mode")]
+#[description = "Mraww? (If I'm measuring how folks talk, when should I listen in?)"]
 #[owner_privilege]
 pub async fn gather_mode(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	match GatherMode::parse(&mut args) {

@@ -4,15 +4,12 @@ use crate::voicehunt::*;
 
 use serenity::{
 	client::*,
-	framework::standard::{
-		macros::{command, help},
-		Args,
-		CommandResult,
-	},
+	framework::standard::{macros::command, Args, CommandResult},
 	model::prelude::*,
 };
 
 #[command]
+#[description = "Mraa! (I'll come hang out wherever folks are, or what channel you tell me!)"]
 #[owner_privilege]
 pub async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
@@ -43,6 +40,7 @@ pub async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 }
 
 #[command]
+#[description = "Mreh... (I'll come hang out wherever folks are, real quietly!)"]
 #[owner_privilege]
 pub async fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
@@ -62,6 +60,7 @@ pub async fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 }
 
 #[command]
+#[description = "Myowr! (Another hunt ends in success!)"]
 #[owner_privilege]
 pub async fn cart(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
@@ -81,6 +80,7 @@ pub async fn cart(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 
 #[command]
 #[aliases("vol")]
+#[description = "Mya... (I'll be a little quieter...)"]
 #[owner_privilege]
 pub async fn volume(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.

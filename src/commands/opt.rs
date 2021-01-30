@@ -1,184 +1,152 @@
-// use super::*;
+use super::*;
 
-// use crate::{
-// 	audio_resources::*,
-// 	config::{BotConfig, ConfigParseError, Control as CfgControl, ControlMode},
-// 	constants::*,
-// 	dbs::*,
-// 	event_handler::*,
-// 	voicehunt::*,
-// 	watchcat::*,
-// };
+use crate::{config::OptInOut, dbs::*, guild::*, user::UserStateKey};
 
-// use serenity::{
-// 	async_trait,
-// 	client::*,
-// 	framework::standard::{
-// 		macros::{check, command, group, help},
-// 		Args,
-// 		CommandOptions,
-// 		CommandResult,
-// 		Reason as CheckReason,
-// 		StandardFramework,
-// 	},
-// 	http::client::Http,
-// 	model::prelude::*,
-// 	prelude::*,
-// 	utils::*,
-// 	Result as SResult,
-// };
+use serenity::{
+	client::*,
+	framework::standard::{macros::command, Args, CommandResult},
+	model::prelude::*,
+};
+use std::sync::Arc;
 
-// use std::{
-// 	collections::{HashMap, HashSet},
-// 	convert::TryInto,
-// 	env,
-// 	fs::File,
-// 	io::prelude::*,
-// 	sync::Arc,
-// };
+#[command]
+#[description = "Mya! (You don't want to help with network measurement? That's okay!)"]
+pub async fn optout(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
+	let us = {
+		let data = ctx.data.read().await;
+		Arc::clone(data.get::<UserStateKey>().unwrap())
+	};
 
-// #[command]
-// #[aliases("log-to")]
-// #[owner_privilege]
-// pub async fn log_to(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-// 	let out_chan = parse_chan_mention(&mut args);
+	us.optout(msg.author.id).await;
 
-// 	if out_chan.is_none() {
-// 		return confused(&ctx, msg).await;
-// 	}
+	check_msg(
+		msg.reply(
+			&ctx.http,
+			"Mya! :heart: (Thanks for the heads up! I won't pay you any mind!)",
+		)
+		.await,
+	);
 
-// 	let out_chan = out_chan.unwrap();
+	Ok(())
+}
 
-// 	// Get the guild ID.
-// 	let guild_id = match msg.guild(&ctx.cache).await {
-// 		Some(c) => c.id,
-// 		None => {
-// 			return confused(&ctx, msg).await;
-// 		},
-// 	};
+#[command]
+#[description = "Mya! (You want to help out with network measurement!)"]
+#[only_in(guilds)]
+pub async fn optin(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
+	// Get the guild ID.
+	let guild = match msg.guild(&ctx.cache).await {
+		Some(c) => c,
+		None => {
+			return confused(&ctx, &msg).await;
+		},
+	};
 
-// 	watchcat(&ctx, guild_id, WatchcatCommand::SetChannel(out_chan)).await;
+	let (us, gs) = {
+		let data = ctx.data.read().await;
+		(
+			Arc::clone(data.get::<UserStateKey>().unwrap()),
+			Arc::clone(data.get::<GuildStates>().unwrap()),
+		)
+	};
 
-// 	check_msg(
-// 		msg.channel_id
-// 			.say(&ctx.http, "Mrowrorr! (I'll keep you nyotified!)")
-// 			.await,
-// 	);
+	us.optin(msg.author.id).await;
 
-// 	Ok(())
-// }
+	if let Some(gs) = gs.get(&guild.id) {
+		let kind = {
+			let lock = gs.read().await;
+			lock.server_opt()
+		};
 
-// #[command]
-// #[aliases("felyne-prefix")]
-// #[owner_privilege]
-// pub async fn felyne_prefix(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-// 	let new_prefix = args.single::<String>();
+		match kind {
+			OptInOut::ServerOut => {
+				check_msg(
+					msg.reply(
+						&ctx.http,
+						"Mreh... (Thanks, but this server is not participating...)",
+					)
+					.await,
+				);
+			},
+			OptInOut::UserIn(r) => {
+				let role_added = guild.member(ctx, msg.author.id).await;
+				let role_added = match role_added {
+					Ok(mut member) => member.add_role(ctx, r).await,
+					Err(e) => Err(e),
+				};
 
-// 	if new_prefix.is_err() {
-// 		return confused(&ctx, msg).await;
-// 	}
+				let msg_txt = if role_added.is_ok() {
+					"Mya! (Successfully opted in with a tag!)".to_string()
+				} else {
+					format!(
+						"Mrowr?! (I couldn't give you the role {}. Ask an admin?!)",
+						if let Some(r_full) = r.to_role_cached(ctx).await {
+							r_full.name.clone()
+						} else {
+							format!("(ID {:?})", r.0)
+						}
+					)
+				};
 
-// 	let new_prefix = new_prefix.unwrap();
+				check_msg(msg.reply(&ctx.http, msg_txt).await);
+			},
+			OptInOut::ServerIn => {
+				check_msg(msg.reply(&ctx.http, "Mya! (Thanks!)").await);
+			},
+		}
+	}
 
-// 	// Get the guild ID.
-// 	let guild_id = match msg.guild(&ctx.cache).await {
-// 		Some(c) => c.id,
-// 		None => {
-// 			return confused(&ctx, msg).await;
-// 		},
-// 	};
+	Ok(())
+}
 
-// 	let datas = ctx.data.read().await;
-// 	let db = datas.get::<Db>().expect("DB conn installed...");
+#[command]
+#[description = "Mraww? (If I'm measuring how folks talk, should I credit you?)"]
+#[owner_privilege]
+pub async fn ack(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
+	let user_id = msg.author.id;
 
-// 	upsert_prefix(&db, guild_id, &new_prefix).await;
+	let new_str = args.rest().trim();
+	let ack = if !new_str.is_empty() {
+		new_str.to_string()
+	} else {
+		msg.author.name.clone()
+	};
 
-// 	check_msg(
-// 		msg.channel_id
-// 			.say(
-// 				&ctx.http,
-// 				format!("Listening to nyew prefix: {}", &new_prefix),
-// 			)
-// 			.await,
-// 	);
+	let db = {
+		let data = ctx.data.read().await;
+		Arc::clone(data.get::<Db>().unwrap())
+	};
 
-// 	Ok(())
-// }
+	upsert_user_ack(&db, user_id, &ack).await;
 
-// // #[command]
-// // #[aliases("admin-ctl-mode")]
-// // #[owner_privilege]
-// // pub async fn admin_ctl_mode(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-// // 	ctl_mode_basis(ctx, msg, args, true).await
-// // }
+	check_msg(
+		msg.channel_id
+			.say(&ctx.http, format!("Crediting you as: {:?}", ack))
+			.await,
+	);
 
-// // #[command]
-// // #[aliases("ctl-mode")]
-// // #[owner_privilege]
-// // pub async fn ctl_mode(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-// // 	ctl_mode_basis(ctx, msg, args, false).await
-// // }
+	Ok(())
+}
 
-// // async fn ctl_mode_basis(
-// // 	ctx: &Context,
-// // 	msg: &Message,
-// // 	mut args: Args,
-// // 	do_for_admin: bool,
-// // ) -> CommandResult {
-// // 	match CfgControl::parse(&mut args) {
-// // 		Ok(Some(cm)) => {
-// // 			let datas = ctx.data.read().await;
-// // 			let db = datas.get::<Db>().expect("DB conn installed...");
+#[command]
+#[aliases("remove-ack")]
+#[description = "Mya!? (You don't want to be credited anymore?)"]
+#[owner_privilege]
+pub async fn remove_ack(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
+	let user_id = msg.author.id;
 
-// // 			if let Some(g_id) = msg.guild_id {
-// // 				if do_for_admin {
-// // 					upsert_control_admin_cfg(&db, g_id, cm).await;
-// // 				} else {
-// // 					upsert_control_cfg(&db, g_id, cm).await;
-// // 				}
-// // 				check_msg(
-// // 					msg.channel_id
-// // 						.say(
-// // 							&ctx.http,
-// // 							format!(
-// // 								"Now accepting{} commands from: {:?}",
-// // 								if do_for_admin { " admin" } else { "" },
-// // 								&cm,
-// // 							),
-// // 						)
-// // 						.await,
-// // 				);
-// // 			}
+	let db = {
+		let data = ctx.data.read().await;
+		Arc::clone(data.get::<Db>().unwrap())
+	};
 
-// // 			// new mode
-// // 		},
-// // 		Ok(None) => {
-// // 			check_msg(
-// // 				msg.channel_id
-// // 					.say(
-// // 						&ctx.http,
-// // 						format!("I support the modes: {:?}", &ControlMode::LABEL_LIST),
-// // 					)
-// // 					.await,
-// // 			);
-// // 		},
-// // 		Err(e) => {
-// // 			check_msg(msg.channel_id.say(&ctx.http, match e {
-// // 				ConfigParseError::ArgTake => {
-// // 					"Uhh, this shouldn't have happened. Report this to FelixMcFelix#2443?"
-// // 				},
-// // 				ConfigParseError::BadMode => {
-// // 					"Mrowr?! That's an illegal mode! Use this commyand without any extra info to see valid chyoices."
-// // 				},
-// // 				ConfigParseError::IllegalRole => {
-// // 					"Myeh? That role doesn't look valid to me: make sure it's a valid mention or ID!"
-// // 				},
-// // 				ConfigParseError::MissingRole => {
-// // 					"Try that command again, with a role mention or ID!"
-// // 				},
-// // 			}).await);
-// // 		},
-// // 	}
+	delete_user_ack(&db, user_id).await;
 
-// // 	Ok(())
-// // }
+	check_msg(
+		msg.channel_id
+			.say(&ctx.http, "No longer crediting you...".to_string())
+			.await,
+	);
+
+	Ok(())
+}
