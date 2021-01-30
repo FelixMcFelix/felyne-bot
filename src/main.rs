@@ -29,13 +29,8 @@ use serenity::{
 	prelude::*,
 };
 use songbird::{self, SerenityInit};
-use std::{
-	collections::{HashMap, HashSet},
-	env,
-	fs::File,
-	io::prelude::*,
-	sync::Arc,
-};
+use std::{collections::HashSet, env, sync::Arc};
+use tokio::{fs::File, io::AsyncReadExt};
 
 use tracing::*;
 
@@ -64,8 +59,10 @@ async fn main() {
 	let mut token = String::new();
 
 	File::open(&args[1])
+		.await
 		.unwrap_or_else(|_| panic!("Mraaw, mrow!?! (Grr! '{}' wasn't there?)", &args[1]))
 		.read_to_string(&mut token)
+		.await
 		.unwrap_or_else(|_| panic!("Nya!! (I can see '{}', but I can't read it!)", &args[1]));
 
 	let bot_config: BotConfig =
@@ -166,7 +163,7 @@ async fn main() {
 	{
 		let mut data = client.data.write().await;
 		data.insert::<DeleteWatchcat>(DashMap::new());
-		data.insert::<VoiceHunt>(HashMap::new());
+		data.insert::<VoiceHunt>(DashMap::new());
 		data.insert::<GuildStates>(Default::default());
 		data.insert::<UserStateKey>(Arc::new(UserState::new(db.clone()).await));
 

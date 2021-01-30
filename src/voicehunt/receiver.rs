@@ -86,10 +86,7 @@ impl VoiceHuntReceiver {
 			},
 			Ok(ReceiverSignal::Active) => {
 				let never_act = self.never_act.load(Ordering::Relaxed);
-				let prevent = match self.gather_mode {
-					GatherMode::NeverGather => true,
-					_ => false,
-				};
+				let prevent = matches!(self.gather_mode, GatherMode::NeverGather);
 
 				self.do_nothing
 					.store(never_act || prevent, Ordering::Relaxed);
@@ -98,10 +95,7 @@ impl VoiceHuntReceiver {
 			},
 			Ok(ReceiverSignal::Inactive) => {
 				let never_act = self.never_act.load(Ordering::Relaxed);
-				let prevent = match self.gather_mode {
-					GatherMode::AlwaysGather => false,
-					_ => true,
-				};
+				let prevent = !matches!(self.gather_mode, GatherMode::AlwaysGather);
 
 				self.do_nothing
 					.store(never_act || prevent, Ordering::Relaxed);

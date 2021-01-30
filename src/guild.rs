@@ -68,7 +68,7 @@ impl GuildState {
 		builder.push("Voice control: ");
 		builder.push_italic_line(format!("{:?}", self.voice_control_mode));
 		builder.push("Custom command prefix: ");
-		builder.push_italic_line(format!("{:?}", self.custom_prefix));
+		builder.push_italic_line_safe(format!("{:?}", self.custom_prefix));
 
 		builder.push_bold_line(format!("Measurement details for {}:", self.guild));
 
@@ -83,7 +83,7 @@ impl GuildState {
 
 			if let Some(ack) = &self.custom_ack {
 				builder.push("Server acknowledgement as: ");
-				builder.push_italic_line(ack);
+				builder.push_italic_line_safe(ack);
 			} else {
 				builder.push_line("Server not being explicitly acknowledged.");
 			}

@@ -143,10 +143,7 @@ pub async fn upsert_watchcat(db: &Client, guild_id: GuildId, channel_id: Channel
 		.await;
 
 	let val = match query {
-		Ok(query) => {
-			println!("Queried! {} -> {}", t_id, t_c_id);
-			db.execute(&query, &[&t_id, &t_c_id]).await
-		},
+		Ok(query) => db.execute(&query, &[&t_id, &t_c_id]).await,
 		Err(e) => Err(e),
 	};
 

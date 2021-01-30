@@ -81,7 +81,7 @@ pub async fn optin(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 					format!(
 						"Mrowr?! (I couldn't give you the role {}. Ask an admin?!)",
 						if let Some(r_full) = r.to_role_cached(ctx).await {
-							r_full.name.clone()
+							r_full.name
 						} else {
 							format!("(ID {:?})", r.0)
 						}

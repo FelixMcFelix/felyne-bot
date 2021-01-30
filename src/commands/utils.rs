@@ -9,9 +9,11 @@ use serenity::{
 use tracing::*;
 
 pub fn parse_chan_mention(args: &mut Args) -> Option<ChannelId> {
-	let chan_name = args.single::<String>().ok()?;
-	let channel_id = parse_channel(chan_name.as_str())?;
-	Some(ChannelId(channel_id))
+	let channel_id = args.single::<String>().ok()?;
+
+	parse_channel(channel_id.as_str())
+		.or_else(|| channel_id.parse::<u64>().ok())
+		.map(ChannelId)
 }
 
 pub async fn confused(ctx: &Context, msg: &Message) -> CommandResult {
