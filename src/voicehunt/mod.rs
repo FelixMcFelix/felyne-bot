@@ -148,7 +148,7 @@ impl VHState {
 		self.huntsim_rx = Some(reverse_receiver);
 	}
 
-	fn control(
+	async fn control(
 		&mut self,
 		vox_manager: Arc<Mutex<Call>>,
 		mode: VoiceHuntCommand,
@@ -182,17 +182,8 @@ impl VHState {
 			Carted => {
 				self.send(VoiceHuntMessage::Cart);
 				if let Some(rx) = self.huntsim_rx.as_ref() {
-					'waitdone: loop {
-						match rx.try_recv() {
-							Ok(VoiceHuntResponse::Done) => {
-								break 'waitdone;
-							},
-							Err(TryRecvError::Empty) => {},
-							Err(TryRecvError::Disconnected) => {
-								break 'waitdone;
-							},
-						}
-					}
+					// inner thread needs to die one way or another.
+					let _ = rx.recv_async().await;
 				}
 
 				self.huntsim_tx = None;
@@ -913,14 +904,18 @@ pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHunt
 			voice_manager_lock,
 		)
 	};
-	vhstate.lock().await.control(
-		voice_manager_lock,
-		mode,
-		resources,
-		ctx,
-		&guild_state,
-		&user_states,
-	);
+	vhstate
+		.lock()
+		.await
+		.control(
+			voice_manager_lock,
+			mode,
+			resources,
+			ctx,
+			&guild_state,
+			&user_states,
+		)
+		.await;
 }
 
 pub async fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
