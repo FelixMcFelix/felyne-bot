@@ -79,6 +79,7 @@ impl EventHandler for FelyneEvts {
 	}
 
 	async fn ready(&self, ctx: Context, _rdy: Ready) {
+		println!("Connyected!");
 		ctx.set_activity(Activity::listening("scary monsters!"))
 			.await;
 	}

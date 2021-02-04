@@ -1,7 +1,10 @@
 pub mod receiver;
 
 use crate::{automata::*, constants::*, guild::*, user::*, Resources, RxMap};
-use dashmap::DashMap;
+use dashmap::{
+	mapref::entry::Entry as DashEntry,
+	DashMap,
+};
 use flume::{self, Receiver, Sender, TryRecvError};
 use rand::{distributions::*, thread_rng};
 use receiver::{listen_in, ReceiverSignal};
@@ -72,7 +75,7 @@ pub struct VHState {
 }
 
 impl VHState {
-	fn new(
+	async fn new(
 		guild_id: GuildId,
 		user_id: UserId,
 		vox_manager: Arc<Mutex<Call>>,
@@ -106,7 +109,7 @@ impl VHState {
 			ctx,
 			guild_state,
 			user_states,
-		);
+		).await;
 
 		out
 	}
@@ -851,7 +854,8 @@ async fn felyne_life(
 }
 
 pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHuntCommand) {
-	let (vhstate, guild_state, user_states, resources, voice_manager_lock) = {
+	let vhstate = try_create_vh_state(ctx, guild_id).await;
+	let (guild_state, user_states, resources, voice_manager_lock) = {
 		let datas = ctx.data.read().await;
 		let voice_manager_lock = datas
 			.get::<SongbirdKey>()
@@ -859,13 +863,10 @@ pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHunt
 			.unwrap()
 			.get_or_insert(guild_id.into());
 
-		let also_vox_lock = voice_manager_lock.clone();
 		let resources = datas
 			.get::<Resources>()
 			.expect("Resources must exists after init...")
 			.clone();
-
-		let u_id = ctx.cache.current_user_id().await;
 
 		let guild_state = datas
 			.get::<GuildStates>()
@@ -879,25 +880,7 @@ pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHunt
 			.expect("Resources must exists after init...")
 			.clone();
 
-		let vhstate = datas
-			.get::<VoiceHunt>()
-			.unwrap()
-			.entry(guild_id)
-			.or_insert_with(|| {
-				Arc::new(Mutex::new(VHState::new(
-					guild_id,
-					u_id,
-					also_vox_lock,
-					resources.clone(),
-					ctx,
-					&guild_state,
-					&user_states,
-				)))
-			})
-			.clone();
-
 		(
-			vhstate,
 			guild_state,
 			user_states,
 			resources,
@@ -919,52 +902,7 @@ pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHunt
 }
 
 pub async fn voicehunt_update(ctx: &Context, guild_id: GuildId, vox: VoiceState) {
-	let vhstate = {
-		let datas = ctx.data.read().await;
-		let voice_manager_lock = datas
-			.get::<SongbirdKey>()
-			.cloned()
-			.unwrap()
-			.get_or_insert(guild_id.into());
-
-		let resources = datas
-			.get::<Resources>()
-			.expect("Resources must exists after init...")
-			.clone();
-
-		let u_id = ctx.cache.current_user_id().await;
-
-		let guild_state = datas
-			.get::<GuildStates>()
-			.expect("Resources must exists after init...")
-			.get(&guild_id)
-			.expect("Tried to act on a guild I haven't yet installed!")
-			.clone();
-
-		let user_states = datas
-			.get::<UserStateKey>()
-			.expect("Resources must exists after init...")
-			.clone();
-
-		let out = datas
-			.get::<VoiceHunt>()
-			.unwrap()
-			.entry(guild_id)
-			.or_insert_with(|| {
-				Arc::new(Mutex::new(VHState::new(
-					guild_id,
-					u_id,
-					voice_manager_lock,
-					resources,
-					ctx,
-					&guild_state,
-					&user_states,
-				)))
-			})
-			.clone();
-
-		out
-	};
+	let vhstate = try_create_vh_state(ctx, guild_id).await;
 
 	vhstate.lock().await.register_user_state(&vox, true);
 }
@@ -974,52 +912,61 @@ pub async fn voicehunt_complete_update(
 	guild_id: GuildId,
 	voice_states: HashMap<UserId, VoiceState>,
 ) {
-	let vhstate = {
-		let datas = ctx.data.read().await;
-		let voice_manager_lock = datas
-			.get::<SongbirdKey>()
-			.cloned()
-			.unwrap()
-			.get_or_insert(guild_id.into());
-
-		let resources = datas
-			.get::<Resources>()
-			.expect("Resources must exists after init...")
-			.clone();
-
-		let u_id = ctx.cache.current_user_id().await;
-
-		let guild_state = datas
-			.get::<GuildStates>()
-			.expect("Resources must exists after init...")
-			.get(&guild_id)
-			.expect("Tried to act on a guild I haven't yet installed!")
-			.clone();
-
-		let user_states = datas
-			.get::<UserStateKey>()
-			.expect("Resources must exists after init...")
-			.clone();
-
-		let out = datas
-			.get::<VoiceHunt>()
-			.unwrap()
-			.entry(guild_id)
-			.or_insert_with(|| {
-				Arc::new(Mutex::new(VHState::new(
-					guild_id,
-					u_id,
-					voice_manager_lock,
-					resources,
-					ctx,
-					&guild_state,
-					&user_states,
-				)))
-			})
-			.clone();
-
-		out
-	};
+	let vhstate = try_create_vh_state(ctx, guild_id).await;
 
 	vhstate.lock().await.register_user_states(voice_states);
+}
+
+async fn try_create_vh_state(ctx: &Context, guild_id: GuildId) -> Arc<Mutex<VHState>> {
+	let datas = ctx.data.read().await;
+	let voice_manager_lock = datas
+		.get::<SongbirdKey>()
+		.cloned()
+		.unwrap()
+		.get_or_insert(guild_id.into());
+
+	let resources = datas
+		.get::<Resources>()
+		.expect("Resources must exists after init...")
+		.clone();
+
+	let u_id = ctx.cache.current_user_id().await;
+
+	let guild_state = datas
+		.get::<GuildStates>()
+		.expect("Resources must exists after init...")
+		.get(&guild_id)
+		.expect("Tried to act on a guild I haven't yet installed!")
+		.clone();
+
+	let user_states = datas
+		.get::<UserStateKey>()
+		.expect("Resources must exists after init...")
+		.clone();
+
+	let proto_out = datas
+		.get::<VoiceHunt>()
+		.unwrap()
+		.entry(guild_id);
+
+	match proto_out {
+		DashEntry::Vacant(space) => {
+			let out = Arc::new(Mutex::new(VHState::new(
+				guild_id,
+				u_id,
+				voice_manager_lock,
+				resources,
+				ctx,
+				&guild_state,
+				&user_states,
+			).await));
+
+			space.insert(out.clone());
+
+			out
+		},
+		DashEntry::Occupied(out) => {
+			out.get().clone()
+		}
+	}
 }
