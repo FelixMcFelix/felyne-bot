@@ -85,7 +85,7 @@ impl GuildState {
 			builder.push("Server measure mode: ");
 			builder.push_italic_line(format!("{:?}", self.gather));
 			builder.push("Server type: ");
-			builder.push_italic_line(format!("{:?}", self.label));
+			builder.push_italic_line(format!("{:?}", self.label()));
 
 			if let Some(ack) = &self.custom_ack {
 				builder.push("Server acknowledgement as: ");
@@ -140,6 +140,11 @@ impl GuildState {
 			} else if self.server_opt.is_user_explicit_in(ctx, user, guild).await {
 				// check if user has role.
 				builder.push_bold_line("You're currently opted in!");
+			}
+
+			if let Ok(ack_as) = self.db.select_user_ack(user.id).await {
+				builder.push_bold("You've asked to be mentioned as: ");
+				builder.push_italic_line_safe(&ack_as);
 			}
 
 			builder.push_italic_line("\nSee https://github.com/FelixMcFelix/felyne-bot/blob/master/MEASUREMENT.md for more info!");

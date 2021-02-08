@@ -56,7 +56,7 @@ impl Label {
 
 impl From<&Row> for Label {
 	fn from(row: &Row) -> Self {
-		Self::from_i16(row.get(0)).expect("Invalid Db state!")
+		Self::from_i32(row.get(0)).expect("Invalid Db state!")
 	}
 }
 

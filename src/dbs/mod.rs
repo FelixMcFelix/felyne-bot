@@ -432,8 +432,8 @@ impl FelyneDb {
 	}
 
 	#[inline]
-	pub async fn select_user_ack(&self, guild_id: GuildId) -> Result<String, SqlError> {
-		let g_id = guild_id.0 as i64;
+	pub async fn select_user_ack(&self, user_id: UserId) -> Result<String, SqlError> {
+		let g_id = user_id.0 as i64;
 
 		let query = self.get_statement(Query::SelectAck);
 
