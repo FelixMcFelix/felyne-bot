@@ -1,18 +1,30 @@
 use enum_primitive::*;
 use serde::{Deserialize, Serialize};
-use serenity::{framework::standard::Args, model::id::RoleId};
+use serenity::{
+	client::Context,
+	framework::standard::Args,
+	model::{
+		id::{GuildId, RoleId},
+		user::User,
+	},
+};
 use tokio_postgres::Row;
 
 enum_from_primitive! {
 #[derive(Clone, Copy, Debug)]
 pub enum GatherMode {
-	NeverGather = 0,
-	GatherActive,
+	// This is removed since it is covered by opt-in-out modes.
+	// NeverGather = 0,
+	GatherActive = 1,
 	AlwaysGather,
 }
 }
 
-const GMODES: &[&str] = &["never-gather", "when-active", "always-gather"];
+const GMODES: &[&str] = &[
+	// "never-gather",
+	"when-active",
+	"always-gather",
+];
 
 impl GatherMode {
 	pub const LABEL_LIST: &'static [&'static str] = GMODES;
@@ -23,9 +35,9 @@ impl GatherMode {
 
 	pub fn from_str(label: &str) -> Option<Self> {
 		Self::from_i32(match label {
-			a if a == GMODES[0] => 0,
-			a if a == GMODES[1] => 1,
-			a if a == GMODES[2] => 2,
+			// a if a == GMODES[0] => 0,
+			a if a == GMODES[0] => 1,
+			a if a == GMODES[1] => 2,
 			_ => -1,
 		})
 	}
@@ -40,6 +52,14 @@ impl GatherMode {
 			.map_err(|_| ConfigParseError::ArgTake)?;
 
 		Ok(GatherMode::from_str(&mode))
+	}
+
+	pub async fn user_friendly_print(&self) -> String {
+		match self {
+			// Self::NeverGather => " ".to_string(),
+			Self::GatherActive => " when I'm hunting".to_string(),
+			Self::AlwaysGather => " whenever I'm hanging out".to_string(),
+		}
 	}
 }
 
@@ -140,8 +160,26 @@ impl OptInOut {
 		}
 	}
 
+	pub async fn user_friendly_print(&self, ctx: &Context) -> String {
+		match self {
+			Self::ServerIn => "".to_string(),
+			Self::ServerOut => " never".to_string(),
+			Self::UserIn(r) => match r.to_role_cached(ctx).await {
+				Some(role) => format!(" to folks with the role `{}`", role.name),
+				None => format!(" to folks with the role ID {}", r),
+			},
+		}
+	}
+
 	pub fn opted_out(&self) -> bool {
 		matches!(self, Self::ServerOut)
+	}
+
+	pub async fn is_user_explicit_in(&self, ctx: &Context, user: &User, guild: GuildId) -> bool {
+		match self {
+			Self::UserIn(r) => user.has_role(ctx, guild, r).await.unwrap_or_default(),
+			_ => false,
+		}
 	}
 }
 
@@ -244,6 +282,17 @@ impl Control {
 				}
 			},
 			None => Err(ConfigParseError::BadMode),
+		}
+	}
+
+	pub async fn user_friendly_print(&self, ctx: &Context) -> String {
+		match self {
+			Self::OwnerOnly => "only the owner".to_string(),
+			Self::All => "anyone".to_string(),
+			Self::WithRole(r) => match r.to_role_cached(ctx).await {
+				Some(role) => role.name.clone(),
+				None => format!("{}", r),
+			},
 		}
 	}
 }

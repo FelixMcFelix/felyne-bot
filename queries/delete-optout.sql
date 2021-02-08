@@ -1,0 +1,1 @@
+DELETE FROM user_optout WHERE user_id=$1;

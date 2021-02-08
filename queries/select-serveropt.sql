@@ -1,0 +1,1 @@
+SELECT mode, role_id FROM opt_in_out WHERE guild_id = $1

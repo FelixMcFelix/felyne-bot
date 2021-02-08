@@ -1,0 +1,1 @@
+SELECT ack_as FROM user_ack WHERE user_id = $1

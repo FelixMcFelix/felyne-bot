@@ -2,7 +2,6 @@ use crate::dbs::*;
 use dashmap::DashSet;
 use serenity::{model::prelude::UserId, prelude::*};
 use std::sync::Arc;
-use tokio_postgres::Client;
 
 pub struct UserStateKey;
 
@@ -11,13 +10,13 @@ impl TypeMapKey for UserStateKey {
 }
 
 pub struct UserState {
-	db: Arc<Client>,
+	db: Arc<FelyneDb>,
 	optouts: DashSet<UserId>,
 }
 
 impl UserState {
-	pub async fn new(db: Arc<Client>) -> Self {
-		let users = select_optout_users(&db).await;
+	pub async fn new(db: Arc<FelyneDb>) -> Self {
+		let users = db.select_optout_users().await;
 		let optouts = DashSet::new();
 
 		if let Ok(users) = users {
@@ -30,12 +29,12 @@ impl UserState {
 	}
 
 	pub async fn optout(&self, u_id: UserId) {
-		upsert_optout(&self.db, u_id).await;
+		self.db.upsert_optout(u_id).await;
 		self.optouts.insert(u_id);
 	}
 
 	pub async fn optin(&self, u_id: UserId) {
-		delete_optout(&self.db, u_id).await;
+		self.db.delete_optout(u_id).await;
 		self.optouts.remove(&u_id);
 	}
 

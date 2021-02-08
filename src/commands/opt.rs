@@ -117,7 +117,7 @@ pub async fn ack(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
 		Arc::clone(data.get::<Db>().unwrap())
 	};
 
-	upsert_user_ack(&db, user_id, &ack).await;
+	db.upsert_user_ack(user_id, &ack).await;
 
 	check_msg(
 		msg.channel_id
@@ -140,7 +140,7 @@ pub async fn remove_ack(ctx: &Context, msg: &Message, _args: Args) -> CommandRes
 		Arc::clone(data.get::<Db>().unwrap())
 	};
 
-	delete_user_ack(&db, user_id).await;
+	db.delete_user_ack(user_id).await;
 
 	check_msg(
 		msg.channel_id

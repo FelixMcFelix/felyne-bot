@@ -1,0 +1,1 @@
+SELECT channel_id FROM message_undelete WHERE guild_id = $1

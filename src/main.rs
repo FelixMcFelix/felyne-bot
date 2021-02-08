@@ -81,12 +81,6 @@ async fn main() {
 		},
 	};
 
-	// Try and build tables, if we don't have them.
-	if let Err(e) = init_db_tables(&db).await {
-		error!("Nya nya nya?!?! (Couldn't setup db tables: {:?})", e);
-		return;
-	}
-
 	let (owners, bot_id) = {
 		let http = Http::new_with_token(&token_raw);
 

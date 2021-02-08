@@ -1,0 +1,1 @@
+SELECT prefix FROM guild_prefix_override WHERE guild_id = $1

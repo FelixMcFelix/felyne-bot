@@ -1,4 +1,4 @@
-use crate::{constants::*, dbs::*, Db};
+use crate::{constants::*, Db};
 use dashmap::DashMap;
 use rand::random;
 use serenity::{client::*, model::prelude::*, prelude::*, utils::*};
@@ -79,7 +79,7 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 	let db = datas.get::<Db>().expect("DB conn installed...");
 
 	if let SetChannel(_) = cmd {
-	} else if let Ok(chan) = select_watchcat(&db, guild_id).await {
+	} else if let Ok(chan) = db.select_watchcat(guild_id).await {
 		let top_do = top_dog_holder
 			.get(&guild_id)
 			.expect("Guaranteed to exist by above insertion");
@@ -97,7 +97,7 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 			let mut top_dog = top_do.write().await;
 			top_dog.output_channel = Some(chan);
 
-			upsert_watchcat(&db, guild_id, chan).await;
+			db.upsert_watchcat(guild_id, chan).await;
 		},
 		ReportDelete(event_chan, msgs) => {
 			let top_do = top_dog_holder

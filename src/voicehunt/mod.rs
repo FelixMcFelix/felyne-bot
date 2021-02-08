@@ -1,10 +1,8 @@
+pub mod mode;
 pub mod receiver;
 
 use crate::{automata::*, constants::*, guild::*, user::*, Resources, RxMap};
-use dashmap::{
-	mapref::entry::Entry as DashEntry,
-	DashMap,
-};
+use dashmap::{mapref::entry::Entry as DashEntry, DashMap};
 use flume::{self, Receiver, Sender, TryRecvError};
 use rand::{distributions::*, thread_rng};
 use receiver::{listen_in, ReceiverSignal};
@@ -102,14 +100,20 @@ impl VHState {
 			huntsim_rx: None,
 		};
 
+		let base_state = {
+			let gs = guild_state.read().await;
+			gs.join()
+		};
+
 		out.control(
 			vox_manager,
-			VoiceHuntCommand::Stalk,
+			base_state.as_command(),
 			resources,
 			ctx,
 			guild_state,
 			user_states,
-		).await;
+		)
+		.await;
 
 		out
 	}
@@ -880,12 +884,7 @@ pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHunt
 			.expect("Resources must exists after init...")
 			.clone();
 
-		(
-			guild_state,
-			user_states,
-			resources,
-			voice_manager_lock,
-		)
+		(guild_state, user_states, resources, voice_manager_lock)
 	};
 	vhstate
 		.lock()
@@ -944,29 +943,27 @@ async fn try_create_vh_state(ctx: &Context, guild_id: GuildId) -> Arc<Mutex<VHSt
 		.expect("Resources must exists after init...")
 		.clone();
 
-	let proto_out = datas
-		.get::<VoiceHunt>()
-		.unwrap()
-		.entry(guild_id);
+	let proto_out = datas.get::<VoiceHunt>().unwrap().entry(guild_id);
 
 	match proto_out {
 		DashEntry::Vacant(space) => {
-			let out = Arc::new(Mutex::new(VHState::new(
-				guild_id,
-				u_id,
-				voice_manager_lock,
-				resources,
-				ctx,
-				&guild_state,
-				&user_states,
-			).await));
+			let out = Arc::new(Mutex::new(
+				VHState::new(
+					guild_id,
+					u_id,
+					voice_manager_lock,
+					resources,
+					ctx,
+					&guild_state,
+					&user_states,
+				)
+				.await,
+			));
 
 			space.insert(out.clone());
 
 			out
 		},
-		DashEntry::Occupied(out) => {
-			out.get().clone()
-		}
+		DashEntry::Occupied(out) => out.get().clone(),
 	}
 }

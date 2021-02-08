@@ -24,7 +24,7 @@ use std::collections::HashSet;
 #[group]
 #[description = "Info about me!"]
 #[summary = "Info!"]
-#[commands(github, optin, optout, ack, remove_ack)]
+#[commands(github, info, optin, optout, ack, remove_ack)]
 struct Everyone;
 
 #[group]

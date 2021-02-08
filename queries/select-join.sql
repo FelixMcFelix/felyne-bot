@@ -1,0 +1,1 @@
+SELECT mode, channel FROM join_config WHERE guild_id = $1

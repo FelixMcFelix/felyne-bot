@@ -1,0 +1,1 @@
+SELECT mode, role FROM control_admin_config WHERE guild_id = $1

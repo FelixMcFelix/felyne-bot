@@ -1,0 +1,1 @@
+SELECT ack_as FROM guild_ack WHERE guild_id = $1

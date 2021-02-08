@@ -1,0 +1,1 @@
+SELECT mode FROM gather_config WHERE guild_id = $1

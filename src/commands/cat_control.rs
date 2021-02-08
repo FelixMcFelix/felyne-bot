@@ -1,12 +1,16 @@
 use super::*;
 
-use crate::voicehunt::*;
+use crate::{
+	guild::*,
+	voicehunt::{mode::Join, *},
+};
 
 use serenity::{
 	client::*,
 	framework::standard::{macros::command, Args, CommandResult},
 	model::prelude::*,
 };
+use std::sync::Arc;
 
 #[command]
 #[description = "Mraa! (I'll come hang out wherever folks are, or what channel you tell me!)"]
@@ -20,16 +24,32 @@ pub async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 		},
 	};
 
+	let gs = {
+		let data = ctx.data.read().await;
+		Arc::clone(data.get::<GuildStates>().unwrap())
+	};
+
 	// Turn first arg (hopefully a channel mention) into a real channel
 	voicehunt_control(
 		&ctx,
 		guild,
 		match args.single::<u64>().ok() {
 			Some(c) => {
-				// TODO: make use of string parsing for greeat good.
+				if let Some(state) = gs.get(&guild) {
+					let mut lock = state.write().await;
+					lock.set_join(Join::DirectedHunt(ChannelId(c))).await;
+				}
+
 				VoiceHuntCommand::DirectedHunt(ChannelId(c))
 			},
-			None => VoiceHuntCommand::BraveHunt,
+			None => {
+				if let Some(state) = gs.get(&guild) {
+					let mut lock = state.write().await;
+					lock.set_join(Join::Hunt).await;
+				}
+
+				VoiceHuntCommand::BraveHunt
+			},
 		},
 	)
 	.await;
@@ -51,6 +71,16 @@ pub async fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 		},
 	};
 
+	let gs = {
+		let data = ctx.data.read().await;
+		Arc::clone(data.get::<GuildStates>().unwrap())
+	};
+
+	if let Some(state) = gs.get(&guild) {
+		let mut lock = state.write().await;
+		lock.set_join(Join::Watch).await;
+	}
+
 	// Turn first arg (hopefully a channel mention) into a real channel
 	voicehunt_control(&ctx, guild, VoiceHuntCommand::Stalk).await;
 
@@ -70,6 +100,16 @@ pub async fn cart(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 			return confused(&ctx, &msg).await;
 		},
 	};
+
+	let gs = {
+		let data = ctx.data.read().await;
+		Arc::clone(data.get::<GuildStates>().unwrap())
+	};
+
+	if let Some(state) = gs.get(&guild) {
+		let mut lock = state.write().await;
+		lock.set_join(Join::Carted).await;
+	}
 
 	voicehunt_control(&ctx, guild, VoiceHuntCommand::Carted).await;
 
