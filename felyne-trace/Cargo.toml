@@ -1,0 +1,38 @@
+[package]
+name = "felyne-trace"
+version = "0.1.0"
+authors = ["Kyle Simpson <kyleandrew.simpson@gmail.com>"]
+edition = "2018"
+
+[dependencies.async-bincode]
+optional = true
+version = "0.6"
+
+[dependencies.async-compression]
+optional = true
+version = "0.3"
+features = ["tokio", "zlib"]
+
+[dependencies.futures]
+optional = true
+version = "0.3"
+
+[dependencies.tokio]
+optional = true
+version = "1"
+default-features = false
+
+[dependencies]
+bincode = "1"
+enum_primitive = "0.1"
+flate2 = "1.0"
+phf = { version = "0.8", features = ["macros"] }
+serde = { version = "1", features = ["derive"] }
+
+[features]
+async = [
+	"async-bincode",
+	"async-compression",
+	"futures",
+	"tokio",
+]

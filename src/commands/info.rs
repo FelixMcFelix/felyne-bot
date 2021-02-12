@@ -26,6 +26,10 @@ pub async fn github(ctx: &Context, msg: &Message, _args: Args) -> CommandResult 
 #[command]
 #[description = "Mya! (Let me tell you about how I'm feeling!)"]
 pub async fn info(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
+	if !mentions_me(ctx, msg).await {
+		return Ok(());
+	}
+
 	let guild = match msg.guild(&ctx.cache).await {
 		Some(c) => c,
 		None => {

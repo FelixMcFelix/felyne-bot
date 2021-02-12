@@ -1,38 +1,34 @@
+use super::live::LiveTrace;
 use crate::{
 	config::{GatherMode, OptInOut},
 	constants::TRACE_DIR,
+	guild::GuildState,
 	user::UserState,
 };
-use dashmap::DashMap;
+use felyne_trace::FelyneTrace;
 use flume::{Receiver, Sender, TryRecvError};
-use serde::{Deserialize, Serialize};
-use serenity::{async_trait, client::Context, model::prelude::GuildId};
+use serenity::{
+	async_trait,
+	client::Context,
+	model::prelude::{GuildId, UserId},
+};
 use songbird::{
 	events::{CoreEvent, Event, EventContext, EventHandler},
 	Call,
 };
 use std::{
-	mem,
-	num::NonZeroU16,
 	sync::{
 		atomic::{AtomicBool, Ordering},
 		Arc,
 	},
-	time::{SystemTime, UNIX_EPOCH},
+	time::{Instant, SystemTime},
 };
-use tokio::{
-	fs::{self, File},
-	io::AsyncWriteExt,
-};
-use tracing::*;
-
-type Ssrc = u32;
-type Uid = u64;
+use tokio::{fs::File, sync::RwLock};
+use tracing::error;
 
 #[derive(Clone)]
 pub struct VoiceHuntReceiver {
-	sessions: DashMap<Ssrc, VoiceHuntSession>,
-	user_map: DashMap<Uid, Ssrc>,
+	trace: Arc<RwLock<Option<LiveTrace>>>,
 	rx: Receiver<ReceiverSignal>,
 	tx: Sender<ReceiverSignal>,
 
@@ -41,16 +37,19 @@ pub struct VoiceHuntReceiver {
 	gather_mode: GatherMode,
 	user_states: Arc<UserState>,
 	guild_id: GuildId,
+	guild_state: Arc<RwLock<GuildState>>,
 	ctx: Context,
 }
 
 impl VoiceHuntReceiver {
-	pub fn new(
+	pub async fn new(
 		opt_in: OptInOut,
 		gather_mode: GatherMode,
 		user_states: Arc<UserState>,
 		guild_id: GuildId,
+		guild_state: Arc<RwLock<GuildState>>,
 		making_noise: bool,
+		initial_user_count: usize,
 		ctx: Context,
 	) -> Self {
 		let (tx, rx) = flume::bounded(1);
@@ -62,9 +61,17 @@ impl VoiceHuntReceiver {
 		};
 		let do_nothing = Arc::new((never_act || prevent).into());
 
+		let label = {
+			let lock = guild_state.read().await;
+			lock.label()
+		};
+
 		Self {
-			sessions: Default::default(),
-			user_map: Default::default(),
+			trace: Arc::new(RwLock::new(Some(LiveTrace::new(
+				Instant::now(),
+				label,
+				initial_user_count,
+			)))),
 			rx,
 			tx,
 
@@ -73,6 +80,7 @@ impl VoiceHuntReceiver {
 			gather_mode,
 			user_states,
 			guild_id,
+			guild_state,
 			ctx,
 		}
 	}
@@ -107,6 +115,8 @@ impl VoiceHuntReceiver {
 #[async_trait]
 impl EventHandler for VoiceHuntReceiver {
 	async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+		let time = Instant::now();
+
 		if self.handle_possible_cancel() {
 			Some(Event::Cancel)
 		} else {
@@ -116,13 +126,8 @@ impl EventHandler for VoiceHuntReceiver {
 
 			match ctx {
 				EventContext::SpeakingStateUpdate(s) => {
-					let _ = self
-						.sessions
-						.entry(s.ssrc)
-						.or_insert_with(VoiceHuntSession::new);
-
-					if let Some(u_id) = &s.user_id {
-						let _ = self.user_map.entry(u_id.0).or_insert_with(|| s.ssrc);
+					if let Some(trace) = &mut *self.trace.write().await {
+						trace.speaking_state(time, s);
 					}
 
 					None
@@ -131,47 +136,55 @@ impl EventHandler for VoiceHuntReceiver {
 					audio: _,
 					packet,
 					payload_offset,
-					payload_end_pad: _,
+					payload_end_pad,
 				} => {
-					let ssrc = packet.ssrc;
-
-					let mut entry = self
-						.sessions
-						.entry(ssrc)
-						.or_insert_with(VoiceHuntSession::new);
-
-					entry.value_mut().record(
-						packet.timestamp.into(),
-						packet.sequence.into(),
-						packet.payload.len() - payload_offset,
-					);
-
-					None
-				},
-				EventContext::RtcpPacket { .. } => None,
-				EventContext::ClientConnect(s) => {
-					let _ = self
-						.sessions
-						.entry(s.audio_ssrc)
-						.or_insert_with(VoiceHuntSession::new);
-
-					let _ = self
-						.user_map
-						.entry(s.user_id.0)
-						.or_insert_with(|| s.audio_ssrc);
-
-					None
-				},
-				EventContext::ClientDisconnect(s) => {
-					if let Some((_k, v)) = self.user_map.remove(&s.user_id.0) {
-						if let Some((_ssrc, sess)) = self.sessions.remove(&v) {
-							finalise_audio_session(sess);
-						}
+					if let Some(trace) = &mut *self.trace.write().await {
+						trace.packet(time, packet, *payload_offset, *payload_end_pad);
 					}
 
 					None
 				},
-				EventContext::SpeakingUpdate { .. } => None,
+				EventContext::RtcpPacket {
+					packet,
+					payload_offset,
+					payload_end_pad,
+				} => {
+					if let Some(trace) = &mut *self.trace.write().await {
+						trace.rtcp(time, packet, *payload_offset, *payload_end_pad);
+					}
+
+					None
+				},
+				EventContext::ClientConnect(s) => {
+					if let Some(trace) = &mut *self.trace.write().await {
+						trace.client_connect(time, s.audio_ssrc, UserId(s.user_id.0));
+					}
+
+					None
+				},
+				EventContext::ClientDisconnect(s) => {
+					if let Some(trace) = &mut *self.trace.write().await {
+						trace.client_disconnect(time, UserId(s.user_id.0));
+					}
+
+					None
+				},
+				EventContext::SpeakingUpdate { ssrc, speaking } => {
+					if let Some(trace) = &mut *self.trace.write().await {
+						trace.speaking(time, *ssrc, *speaking);
+					}
+
+					None
+				},
+				EventContext::SsrcKnown(ssrc) => {
+					let user_id = self.ctx.http.get_current_user().await.ok();
+
+					if let Some(trace) = &mut *self.trace.write().await {
+						trace.add_my_ssrc(*ssrc, user_id);
+					}
+
+					None
+				},
 				_ => None,
 			}
 		}
@@ -182,196 +195,49 @@ impl Drop for VoiceHuntReceiver {
 	fn drop(&mut self) {
 		// Easier to do than having a synchro mechanism.
 		// Joining a new channel will cause the old receiver to be dropped.
-		// Similarly, leaving completely eill do the same...
-		self.sessions.iter().for_each(|guard| {
-			let (_ssrc, sess) = guard.pair();
-			finalise_audio_session(sess.clone())
-		});
+		// Similarly, leaving completely will do the same...
+
+		finalise_audio_session(
+			self.trace.clone(),
+			self.user_states.clone(),
+			self.guild_state.clone(),
+			self.ctx.clone(),
+		);
 	}
 }
 
-#[derive(Clone, Copy, Debug)]
-struct VoicePacketMetadata {
-	timestamp: u32,
-	sequence: u16,
-	size: NonZeroU16,
-}
+fn finalise_audio_session(
+	trace: Arc<RwLock<Option<LiveTrace>>>,
+	user_data: Arc<UserState>,
+	guild_state: Arc<RwLock<GuildState>>,
+	ctx: Context,
+) {
+	tokio::spawn(async move {
+		let anonymised: Option<FelyneTrace> = {
+			let mut lock = trace.write().await;
 
-#[derive(Clone, Debug)]
-struct VoiceHuntSession {
-	packets: Vec<VoicePacketMetadata>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-enum PacketChainLink {
-	Packet(NonZeroU16),
-	Missing(u16),
-	Silence(u32),
-}
-
-impl VoiceHuntSession {
-	fn new() -> Self {
-		Self { packets: vec![] }
-	}
-
-	fn record(&mut self, timestamp: u32, sequence: u16, pkt_size: usize) {
-		let pkt = VoicePacketMetadata {
-			timestamp,
-			sequence,
-			size: NonZeroU16::new(pkt_size as u16).expect("Minimum body size is 3 bytes."),
+			if let Some(mut trace) = lock.take() {
+				Some(trace.convert_to_stored(user_data, guild_state, &ctx).await)
+			} else {
+				None
+			}
 		};
 
-		// rough idea:
-		// if timestamp is at risk of overflow, then finalise the existing
-		// session and start a new one.
-		let last_time = self
-			.packets
-			.last()
-			.map(|x| x.timestamp)
-			.unwrap_or(timestamp);
-		let reduced = timestamp < last_time;
+		let time_name = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH);
+		if let Ok(t) = time_name {
+			let fname = format!("{}/{}.bc", TRACE_DIR, t.as_micros());
+			if let Some(trace) = &anonymised {
+				let out = File::create(&fname).await;
 
-		if reduced && last_time - timestamp > 2_000_000 {
-			let mut replacement = Self::new();
-			mem::swap(&mut self.packets, &mut replacement.packets);
-
-			finalise_audio_session(replacement);
-		}
-
-		self.packets.push(pkt);
-	}
-
-	async fn finalise(&mut self) {
-		let mut output: Vec<PacketChainLink> = vec![];
-		let mut last_packet: Option<VoicePacketMetadata> = None;
-
-		// Key assumption: timestamp shouldn't
-		// overflow until a long, long time in the future.
-		// sorting here is cheaper than maybe inserting (and displacing elements)
-		// every time.
-		self.packets.sort_unstable_by(|a, b| {
-			a.timestamp
-				.cmp(&b.timestamp)
-				.then_with(|| a.sequence.cmp(&b.sequence).reverse())
-		});
-
-		for packet in &self.packets {
-			trace!("Packet with len: {:?}", packet);
-			let update = if let Some(pkt_old) = last_packet {
-				// gaps in sequence are dropped packets.
-				let mut target_sequence = pkt_old.sequence.wrapping_add(1);
-				let mut dropped_packets = 0;
-
-				if packet.timestamp <= pkt_old.timestamp {
-					// Anomalous behaviour: we might get a slew of packets
-					// with the same timestamp but outdated sequence.
-					// What does this look like?
-					// Multiple packets w/ same timestamp, bundled with the true next packet.
-
-					// Iterate backwards through output to find/replace a matching missing packet.
-					let mut iter = output.iter_mut();
-					let mut quit = false;
-					loop {
-						if quit {
-							break;
-						}
-
-						if let Some(elem) = iter.next_back() {
-							use PacketChainLink::*;
-
-							*elem = match elem {
-								Missing(x) if *x == packet.sequence => {
-									quit = true;
-									Packet(packet.size)
-								},
-								_ => *elem,
-							};
-						} else {
-							// Made it all the way back without replacing: insert.
-							output.insert(0, PacketChainLink::Packet(packet.size));
-							break;
-						}
-					}
-
-					// early exit to prevent packet insertion
-					continue;
-				}
-
-				// seems to be one case of pathological behaviour which can occur,
-				// where a packet with later timestamp has a smaller sequence (non_wrap).
-				let standard_order = packet.sequence >= target_sequence;
-
-				if standard_order {
-					while target_sequence != packet.sequence {
-						if dropped_packets == 0 {
-							info!(
-								"Expected {:?}, making up for {:?}",
-								packet.sequence, target_sequence
-							);
-						}
-						output.push(PacketChainLink::Missing(target_sequence));
-						target_sequence = target_sequence.wrapping_add(1);
-						dropped_packets += 1;
-					}
-
-					if dropped_packets != 0 {
-						info!(
-							"Pushed {} missing packets from {} to {}.",
-							dropped_packets,
-							pkt_old.sequence.wrapping_add(1),
-							target_sequence
-						);
+				if let Ok(out) = out {
+					if let Err(e) = felyne_trace::write_async(out, &trace).await {
+						error!("Failed to write trace: {:?}", e);
 					}
 				}
-
-				// timestamp gaps larger than 960 samples are silent breaks.
-				// note: 960 samples == 20ms
-				let t_diff = packet.timestamp.wrapping_sub(pkt_old.timestamp) / 48;
-				let windows = (dropped_packets + 1) * 20;
-				if t_diff > windows {
-					output.push(PacketChainLink::Silence(t_diff - windows));
-				}
-
-				standard_order
-			} else {
-				true
-			};
-
-			// if sequence order was violated (against timestamp order), then
-			// concat that packet but don't treat it as the most recent.
-			output.push(PacketChainLink::Packet(packet.size));
-			if update {
-				last_packet = Some(*packet);
 			}
+		} else {
+			error!("Apparently times are hard.");
 		}
-
-		let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-		let mut attempt = 0;
-		let orig_fname = format!("{}", now.as_secs() * 1000 + u64::from(now.subsec_millis()));
-		let mut fname = orig_fname.clone();
-
-		let _ = fs::create_dir_all(TRACE_DIR).await;
-
-		loop {
-			if let Ok(mut file) = File::create(format!("{}{}", TRACE_DIR, fname)).await {
-				if let Ok(bytes) = bincode::serialize(&output) {
-					if let Err(e) = file.write_all(&bytes[..]).await {
-						error!("Error serialising trace: {:?}", e);
-					}
-				}
-				break;
-			} else {
-				fname = format!("{}-{}", orig_fname, attempt);
-				attempt += 1;
-			}
-		}
-	}
-}
-
-fn finalise_audio_session(mut a: VoiceHuntSession) {
-	tokio::spawn(async move {
-		a.finalise().await;
 	});
 }
 
@@ -381,41 +247,53 @@ pub enum ReceiverSignal {
 	Poison,
 }
 
-pub fn listen_in(
+pub async fn listen_in(
 	handler: &mut Call,
 	opt_in: OptInOut,
 	gather_mode: GatherMode,
 	user_states: Arc<UserState>,
+	guild_state: Arc<RwLock<GuildState>>,
 	guild_id: GuildId,
 	making_noise: bool,
+	initial_user_count: usize,
 	ctx: Context,
-) -> Sender<ReceiverSignal> {
-	let vhr = VoiceHuntReceiver::new(
-		opt_in,
-		gather_mode,
-		user_states,
-		guild_id,
-		making_noise,
-		ctx,
-	);
-	let out_tx = vhr.tx.clone();
+) -> Option<Sender<ReceiverSignal>> {
+	if opt_in.opted_out() {
+		None
+	} else {
+		let vhr = VoiceHuntReceiver::new(
+			opt_in,
+			gather_mode,
+			user_states,
+			guild_id,
+			guild_state,
+			making_noise,
+			initial_user_count,
+			ctx,
+		)
+		.await;
+		let out_tx = vhr.tx.clone();
 
-	let n_vhr = vhr.clone();
-	handler.add_global_event(CoreEvent::SpeakingStateUpdate.into(), n_vhr);
+		let n_vhr = vhr.clone();
+		handler.add_global_event(CoreEvent::SpeakingStateUpdate.into(), n_vhr);
 
-	let n_vhr = vhr.clone();
-	handler.add_global_event(CoreEvent::VoicePacket.into(), n_vhr);
+		let n_vhr = vhr.clone();
+		handler.add_global_event(CoreEvent::VoicePacket.into(), n_vhr);
 
-	let n_vhr = vhr.clone();
-	handler.add_global_event(CoreEvent::RtcpPacket.into(), n_vhr);
+		let n_vhr = vhr.clone();
+		handler.add_global_event(CoreEvent::RtcpPacket.into(), n_vhr);
 
-	let n_vhr = vhr.clone();
-	handler.add_global_event(CoreEvent::ClientConnect.into(), n_vhr);
+		let n_vhr = vhr.clone();
+		handler.add_global_event(CoreEvent::ClientConnect.into(), n_vhr);
 
-	let n_vhr = vhr.clone();
-	handler.add_global_event(CoreEvent::ClientDisconnect.into(), n_vhr);
+		let n_vhr = vhr.clone();
+		handler.add_global_event(CoreEvent::ClientDisconnect.into(), n_vhr);
 
-	handler.add_global_event(CoreEvent::SpeakingUpdate.into(), vhr);
+		let n_vhr = vhr.clone();
+		handler.add_global_event(CoreEvent::SsrcKnown.into(), n_vhr);
 
-	out_tx
+		handler.add_global_event(CoreEvent::SpeakingUpdate.into(), vhr);
+
+		Some(out_tx)
+	}
 }

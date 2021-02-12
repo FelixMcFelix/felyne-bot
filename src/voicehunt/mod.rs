@@ -1,3 +1,4 @@
+pub mod live;
 pub mod mode;
 pub mod receiver;
 
@@ -16,7 +17,6 @@ use songbird::{
 use std::{
 	collections::hash_map::{Entry, HashMap},
 	sync::Arc,
-	thread,
 	time::Duration,
 };
 use tokio::time;
@@ -39,7 +39,7 @@ pub enum VoiceHuntCommand {
 
 #[derive(Debug)]
 enum VoiceHuntMessage {
-	Channel(ChannelId, bool),
+	Channel(ChannelId, bool, usize),
 	Stealth,
 	Unstealth,
 	NoChannel,
@@ -332,9 +332,10 @@ impl VHState {
 	fn update_channel(&mut self) {
 		info!("{:?}", self.population_counts);
 		if let Some(chan) = self.active_channel {
-			self.send(VoiceHuntMessage::Channel(chan, true));
-		} else if let Some(Incumbent(_, chan)) = self.incumbent_channel {
-			self.send(VoiceHuntMessage::Channel(chan, false));
+			let chan_users = (*self.population_counts.get(&chan).unwrap_or(&0)) as usize;
+			self.send(VoiceHuntMessage::Channel(chan, true, chan_users));
+		} else if let Some(Incumbent(chan_users, chan)) = self.incumbent_channel {
+			self.send(VoiceHuntMessage::Channel(chan, false, chan_users as usize));
 		} else {
 			self.send(VoiceHuntMessage::NoChannel);
 		}
@@ -354,6 +355,8 @@ async fn quit_vox_channel(
 		let _ = chan.send(ReceiverSignal::Poison);
 	}
 	*receiver_chan = None;
+
+	manager.remove_all_global_events();
 
 	let _ = manager.leave().await;
 }
@@ -611,7 +614,7 @@ async fn felyne_life(
 
 	'escape: loop {
 		match rx.try_recv() {
-			Ok(VoiceHuntMessage::Channel(chan, demand)) => {
+			Ok(VoiceHuntMessage::Channel(chan, demand, chan_users)) => {
 				let new_join = match curr_chan {
 					Some(chan_old) => chan_old != chan,
 					None => true,
@@ -639,11 +642,12 @@ async fn felyne_life(
 							// ensure that the current demand is acted upon.
 							let inner_chan = next_chan.clone();
 							let newer_tx = self_tx.clone();
-							thread::spawn(move || {
-								thread::sleep(Duration::from_secs(5));
-								let mut nc = futures::executor::block_on(inner_chan.lock());
+							tokio::spawn(async move {
+								tokio::time::sleep(Duration::from_secs(5)).await;
+								let mut nc = inner_chan.lock().await;
 								if let Some(WaitState::Queued(chan)) = *nc {
-									let _ = newer_tx.send(VoiceHuntMessage::Channel(chan, false));
+									let _ = newer_tx
+										.send(VoiceHuntMessage::Channel(chan, false, chan_users));
 								}
 								*nc = None;
 							});
@@ -667,15 +671,18 @@ async fn felyne_life(
 							(lock.server_opt(), lock.gather())
 						};
 
-						receiver_chan = Some(listen_in(
+						receiver_chan = listen_in(
 							&mut manager,
 							opt_in,
 							gather_mode,
 							user_states.clone(),
+							guild_state.clone(),
 							guild_id,
 							!stealthy,
+							chan_users,
 							ctx.clone(),
-						));
+						)
+						.await;
 
 						let state = if let Some(s) = bgm_machine.advance(BgmInput::TryIntro) {
 							sfx_machine.cause_cooldown(

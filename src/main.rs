@@ -34,6 +34,12 @@ use tokio::{fs::File, io::AsyncReadExt};
 
 use tracing::*;
 
+struct MyId;
+
+impl TypeMapKey for MyId {
+	type Value = UserId;
+}
+
 struct Owners;
 
 impl TypeMapKey for Owners {
@@ -163,6 +169,7 @@ async fn main() {
 
 		data.insert::<Db>(db);
 		data.insert::<Owners>(owners);
+		data.insert::<MyId>(bot_id);
 
 		data.insert::<Resources>(preload_resources().await);
 	}

@@ -1,10 +1,12 @@
 use crate::config::ConfigParseError;
 use enum_primitive::*;
+use felyne_trace::Label as StoredLabel;
 use serenity::framework::standard::Args;
 use tokio_postgres::Row;
 
 enum_from_primitive! {
 #[derive(Copy, Clone, Debug)]
+#[non_exhaustive]
 pub enum Label {
 	Unlabelled = 0,
 	Social,
@@ -14,11 +16,12 @@ pub enum Label {
 	Music,
 	Tech,
 	Other,
+	Tabletop,
 }
 }
 
 const LABELS: &[&str] = &[
-	"none", "social", "gaming", "raid", "art", "music", "tech", "other",
+	"none", "social", "gaming", "raid", "art", "music", "tech", "other", "tabletop",
 ];
 
 impl Label {
@@ -37,6 +40,8 @@ impl Label {
 			a if a == LABELS[4] => 4,
 			a if a == LABELS[5] => 5,
 			a if a == LABELS[6] => 6,
+			a if a == LABELS[7] => 7,
+			a if a == LABELS[8] => 8,
 			_ => Label::Other as i16,
 		})
 	}
@@ -57,6 +62,22 @@ impl Label {
 impl From<&Row> for Label {
 	fn from(row: &Row) -> Self {
 		Self::from_i32(row.get(0)).expect("Invalid Db state!")
+	}
+}
+
+impl From<Label> for StoredLabel {
+	fn from(label: Label) -> Self {
+		match label {
+			Label::Unlabelled => Self::Unlabelled,
+			Label::Social => Self::Social,
+			Label::Gaming => Self::Gaming,
+			Label::Raid => Self::Raid,
+			Label::Art => Self::Art,
+			Label::Music => Self::Music,
+			Label::Tech => Self::Tech,
+			Label::Other => Self::Other,
+			Label::Tabletop => Self::Tabletop,
+		}
 	}
 }
 

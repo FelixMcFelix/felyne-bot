@@ -51,10 +51,6 @@ impl Join {
 		}
 	}
 
-	pub fn opted_out(&self) -> bool {
-		matches!(self, Self::Watch)
-	}
-
 	pub fn as_command(&self) -> VoiceHuntCommand {
 		match self {
 			Self::Carted => VoiceHuntCommand::Carted,

@@ -29,10 +29,6 @@ const GMODES: &[&str] = &[
 impl GatherMode {
 	pub const LABEL_LIST: &'static [&'static str] = GMODES;
 
-	pub fn to_str(&self) -> Option<&'static str> {
-		GMODES.get(*self as usize).copied()
-	}
-
 	pub fn from_str(label: &str) -> Option<Self> {
 		Self::from_i32(match label {
 			// a if a == GMODES[0] => 0,
@@ -92,10 +88,6 @@ const OMODES: &[&str] = &["server-opt-in", "user-opt-in", "server-opt-out"];
 
 impl OptInOutMode {
 	pub const LABEL_LIST: &'static [&'static str] = OMODES;
-
-	pub fn to_str(&self) -> Option<&'static str> {
-		OMODES.get(*self as usize).copied()
-	}
 
 	pub fn from_str(label: &str) -> Option<Self> {
 		Self::from_i32(match label {
@@ -218,10 +210,6 @@ const CMODES: &[&str] = &["owner", "role", "all"];
 impl ControlMode {
 	pub const LABEL_LIST: &'static [&'static str] = CMODES;
 
-	pub fn to_str(&self) -> Option<&'static str> {
-		CMODES.get(*self as usize).copied()
-	}
-
 	pub fn from_str(label: &str) -> Option<Self> {
 		Self::from_i32(match label {
 			a if a == CMODES[0] => 0,
@@ -290,7 +278,7 @@ impl Control {
 			Self::OwnerOnly => "only the owner".to_string(),
 			Self::All => "anyone".to_string(),
 			Self::WithRole(r) => match r.to_role_cached(ctx).await {
-				Some(role) => role.name.clone(),
+				Some(role) => role.name,
 				None => format!("{}", r),
 			},
 		}

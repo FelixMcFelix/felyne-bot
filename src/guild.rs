@@ -111,7 +111,7 @@ impl GuildState {
 			self.guild
 				.to_guild_cached(ctx)
 				.await
-				.map(|g| g.name.clone())
+				.map(|g| g.name)
 				.unwrap_or_else(|| "<No name!>".to_string())
 		));
 
@@ -151,6 +151,10 @@ impl GuildState {
 		}
 
 		builder.build()
+	}
+
+	pub fn guild(&self) -> GuildId {
+		self.guild
 	}
 
 	pub fn gather(&self) -> GatherMode {

@@ -34,10 +34,12 @@ pub async fn init_db_tables(db: &Client) -> Result<HashMap<Query, Statement>, Sq
 	for i in 0..=(Query::DeleteOptOut as u32) {
 		let query_type = Query::from_u32(i).unwrap();
 		let query_dir = query_type.query_dir();
-		let data = fs::read_to_string(&query_dir).await.expect(&format!(
-			"Failed to find database creation query for {:?} -- {}.",
-			query_type, query_dir
-		));
+		let data = fs::read_to_string(&query_dir).await.unwrap_or_else(|_| {
+			panic!(
+				"Failed to find database creation query for {:?} -- {}.",
+				query_type, query_dir
+			)
+		});
 
 		let query = db.prepare(&data).await;
 
@@ -96,7 +98,7 @@ impl FelyneDb {
 	fn get_statement(&self, query: Query) -> Statement {
 		self.statements
 			.get(&query)
-			.expect(&format!("Query {:?} not inserted at runtime!", query))
+			.unwrap_or_else(|| panic!("Query {:?} not inserted at runtime!", query))
 			.clone()
 	}
 

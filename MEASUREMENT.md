@@ -13,6 +13,7 @@ Felyne looks at events on the call, and records:
 * How early/late each voice packet is received,
 * Whether each packet contains any extension data,
 * The type and size of any extension data,
+* Non-identifying extension data,
 * When user connect/disconnect events occur,
 * The server's type, if it is set,
 * The region of the voice server (USE, USW, EU, etc.),
@@ -23,7 +24,7 @@ These should allow modelling of both how *calls* occur (i.e., load caused by the
 
 All data is fully anonymised, removing any User-to-SSRC and Server ID mappings and replacing these with new opaque integers (counting from 0 upwards).
 Anonymising data as required by the GDPR ensures that measured calls can never be mapped back to their users or server by anyone in the call.
-Data and traffic generators, and models will be made public where possible.
+Data, traffic generators, parsers, and models will be made publicly available.
 
 ## How can I opt out?
 In any server with Felyne, type `@Felyne#6610 optout`.

@@ -76,6 +76,10 @@ pub async fn my_help(
 	groups: &[&'static CommandGroup],
 	owners: HashSet<UserId>,
 ) -> CommandResult {
+	if !mentions_me(context, msg).await {
+		return Ok(());
+	}
+
 	let _ = help_commands::with_embeds(context, msg, args, help_options, groups, owners).await;
 	Ok(())
 }
