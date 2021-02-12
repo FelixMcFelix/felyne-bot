@@ -404,7 +404,7 @@ impl FelyneDb {
 		self.db
 			.query_one(&query, &[&g_id])
 			.await
-			.map(move |row| row.get(1))
+			.map(move |row| row.get(0))
 	}
 
 	#[inline]
@@ -442,7 +442,7 @@ impl FelyneDb {
 		self.db
 			.query_one(&query, &[&g_id])
 			.await
-			.map(move |row| row.get(1))
+			.map(move |row| row.get(0))
 	}
 
 	#[inline]
