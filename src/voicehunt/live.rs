@@ -23,9 +23,6 @@ use tokio::sync::RwLock;
 
 pub type LocalTimedEvent = (Instant, Event);
 
-const LISTENER: u32 = u32::MAX;
-const MISSING: u32 = LISTENER - 1;
-
 // Idea: convert to a single stream of events by drawing from the front of each deque
 // according to who is "first" a la merge sort.
 #[derive(Clone)]
@@ -443,7 +440,7 @@ impl LiveTrace {
 
 			if let Some(u_id) = maybe_found_uid {
 				// try to add an opaque mapping.
-				let next_opaque = (user_id_to_opaque.len() as u64).min(MISSING as u64);
+				let next_opaque = (user_id_to_opaque.len() as u64).min(MISSING_ID as u64);
 				user_id_to_opaque.entry(u_id).or_insert(next_opaque);
 			}
 		}
@@ -458,9 +455,9 @@ impl LiveTrace {
 		// Now put in our own mappings.
 		for ssrc in &self.my_ssrcs {
 			if let Some(user_id) = self.my_uid {
-				user_id_to_opaque.insert(user_id, LISTENER as u64);
+				user_id_to_opaque.insert(user_id, LISTENER_ID as u64);
 			}
-			ssrc_to_opaque.insert(*ssrc, LISTENER as u64);
+			ssrc_to_opaque.insert(*ssrc, LISTENER_ID as u64);
 		}
 
 		// after sort, then we need to anonymise each.
@@ -577,7 +574,7 @@ impl LiveTrace {
 			} => {
 				*sender_id = *ssrc_to_opaque
 					.get(&(*sender_id as u32))
-					.unwrap_or(&(MISSING as u64));
+					.unwrap_or(&(MISSING_ID as u64));
 			},
 			Event::RtcpData(bytes) => {
 				use MutableRtcpPacket as M;
@@ -587,7 +584,7 @@ impl LiveTrace {
 						let opaque = ssrc_to_opaque
 							.get(&old_ssrc)
 							.copied()
-							.unwrap_or(MISSING as u64);
+							.unwrap_or(MISSING_ID as u64);
 						sr.set_ssrc(opaque as u32);
 
 						if let Some(mut sender_info) =
@@ -630,7 +627,7 @@ impl LiveTrace {
 						let opaque = ssrc_to_opaque
 							.get(&rr.get_ssrc())
 							.copied()
-							.unwrap_or(MISSING as u64);
+							.unwrap_or(MISSING_ID as u64);
 						rr.set_ssrc(opaque as u32);
 
 						let mut cursor = 0;
@@ -652,22 +649,22 @@ impl LiveTrace {
 			Event::Speaking(ref mut uid, _) => {
 				*uid = *ssrc_to_opaque
 					.get(&(*uid as u32))
-					.unwrap_or(&(MISSING as u64));
+					.unwrap_or(&(MISSING_ID as u64));
 			},
 
 			// These already contain UserIDs
 			Event::Connect(ref mut uid) =>
 				*uid = *user_to_opaque
 					.get(&UserId(*uid))
-					.unwrap_or(&(MISSING as u64)),
+					.unwrap_or(&(MISSING_ID as u64)),
 			Event::Disconnect(ref mut uid) =>
 				*uid = *user_to_opaque
 					.get(&UserId(*uid))
-					.unwrap_or(&(MISSING as u64)),
+					.unwrap_or(&(MISSING_ID as u64)),
 			Event::SpeakState(ref mut uid, _) =>
 				*uid = *user_to_opaque
 					.get(&UserId(*uid))
-					.unwrap_or(&(MISSING as u64)),
+					.unwrap_or(&(MISSING_ID as u64)),
 			_ => {},
 		}
 	}
@@ -682,7 +679,7 @@ impl LiveTrace {
 		let opaque = ssrc_to_opaque
 			.get(&old_ssrc)
 			.copied()
-			.unwrap_or(MISSING as u64);
+			.unwrap_or(MISSING_ID as u64);
 		block.set_ssrc(opaque as u32);
 
 		let seen_ts = block.get_last_sr_timestamp();

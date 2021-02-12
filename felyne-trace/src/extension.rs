@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Parsed form of the extensions(s) of an RTP packet.
 ///
-/// See [RFC 8285] for the definitions of [`OneByte`]/[`TwoByte`]. 
+/// See [RFC 8285] for the definitions of [`OneByte`]/[`TwoByte`].
 ///
 /// [`OneByte`]: Extension::OneByte
 /// [`TwoByte`]: Extension::TwoByte
@@ -59,7 +59,7 @@ pub struct SubExtension {
 	/// [`OneByte`]: Extension::OneByte
 	pub length: u8,
 	/// Extension body, if available.
-	pub body: Vec<u8>
+	pub body: Vec<u8>,
 }
 
 /// A set of top-level extension IDs known to include no user-identifying data.

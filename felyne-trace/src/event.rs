@@ -14,7 +14,7 @@ pub type TimedEvent = (u128, Event);
 #[non_exhaustive]
 pub enum Event {
 	/// A single voice packet.
-	Packet{
+	Packet {
 		/// Opaque ID of the packet's source.
 		sender_id: u64,
 		/// Relative sequence number of this packet, indicating
