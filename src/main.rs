@@ -50,7 +50,7 @@ fn help() {
 	println!("Mrow mia mrowr?! (Myaster! One file! One token?!)");
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
 	tracing_subscriber::fmt::init();
 	// Check arg count -- do we have a file??
