@@ -1,4 +1,4 @@
-use crate::{constants::*, Db};
+use crate::{constants::*, guild::GuildStates};
 use dashmap::DashMap;
 use rand::random;
 use serenity::{client::*, model::prelude::*, prelude::*, utils::*};
@@ -76,15 +76,27 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 		top_dog_holder.insert(guild_id, Arc::new(RwLock::new(GuildDeleteData::new(None))));
 	}
 
-	let db = datas.get::<Db>().expect("DB conn installed...");
+	let db = {
+		let guilds = datas.get::<GuildStates>().expect("DB conn installed...");
+		Arc::clone(
+			&guilds
+				.get(&guild_id)
+				.expect("Should have been placed in at guild_create."),
+		)
+	};
+
+	let chan_id = {
+		let lock = db.read().await;
+		*lock.watchcat_domain()
+	};
 
 	if let SetChannel(_) = cmd {
-	} else if let Ok(chan) = db.select_watchcat(guild_id).await {
+	} else if let Some(chan) = chan_id {
 		let top_do = top_dog_holder
 			.get(&guild_id)
 			.expect("Guaranteed to exist by above insertion");
 		let mut top_dog = top_do.write().await;
-		top_dog.output_channel = Some(ChannelId(chan));
+		top_dog.output_channel = Some(chan);
 	}
 
 	use crate::WatchcatCommand::*;
@@ -97,9 +109,14 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 			let mut top_dog = top_do.write().await;
 			top_dog.output_channel = Some(chan);
 
-			db.upsert_watchcat(guild_id, chan).await;
+			let mut lock = db.write().await;
+			lock.set_watchcat_domain(chan).await;
 		},
 		ReportDelete(event_chan, msgs) => {
+			if chan_id.is_none() {
+				return;
+			}
+
 			let top_do = top_dog_holder
 				.get(&guild_id)
 				.expect("Guaranteed to exist by above insertion");
@@ -109,6 +126,10 @@ pub async fn watchcat(ctx: &Context, guild_id: GuildId, cmd: WatchcatCommand) {
 			}
 		},
 		BufferMsg(msg) => {
+			if chan_id.is_none() {
+				return;
+			}
+
 			let top_do = top_dog_holder
 				.get(&guild_id)
 				.expect("Guaranteed to exist by above insertion");

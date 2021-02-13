@@ -2,7 +2,7 @@ use crate::{config::*, dbs::*, server::Label, voicehunt::mode::Join, UserStateKe
 use dashmap::DashMap;
 use serenity::{
 	client::Context,
-	model::prelude::{GuildId, User},
+	model::prelude::{ChannelId, GuildId, User},
 	prelude::*,
 	utils::MessageBuilder,
 };
@@ -29,6 +29,7 @@ pub struct GuildState {
 	label: Label,
 	custom_ack: Option<String>,
 	custom_prefix: Option<String>,
+	watchcat_domain: Option<ChannelId>,
 }
 
 impl GuildState {
@@ -49,6 +50,8 @@ impl GuildState {
 
 		let voicehunt_mode = db.select_join_cfg(guild).await.unwrap_or_default();
 
+		let watchcat_domain = db.select_watchcat(guild).await.ok().map(ChannelId);
+
 		Self {
 			db,
 			guild,
@@ -61,6 +64,7 @@ impl GuildState {
 			label,
 			custom_ack,
 			custom_prefix,
+			watchcat_domain,
 		}
 	}
 
@@ -233,5 +237,14 @@ impl GuildState {
 	pub async fn set_custom_prefix(&mut self, val: String) {
 		self.custom_prefix = Some(val.clone());
 		self.db.upsert_prefix(self.guild, &val).await;
+	}
+
+	pub fn watchcat_domain(&self) -> &Option<ChannelId> {
+		&self.watchcat_domain
+	}
+
+	pub async fn set_watchcat_domain(&mut self, val: ChannelId) {
+		self.watchcat_domain = Some(val.clone());
+		self.db.upsert_watchcat(self.guild, val).await;
 	}
 }
