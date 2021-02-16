@@ -576,75 +576,13 @@ impl LiveTrace {
 					.get(&(*sender_id as u32))
 					.unwrap_or(&(MISSING_ID as u64));
 			},
-			Event::RtcpData(bytes) => {
-				use MutableRtcpPacket as M;
-				match demux::demux_mut(&mut bytes[..]) {
-					DemuxedMut::Rtcp(M::SenderReport(mut sr)) => {
-						let old_ssrc = sr.get_ssrc();
-						let opaque = ssrc_to_opaque
-							.get(&old_ssrc)
-							.copied()
-							.unwrap_or(MISSING_ID as u64);
-						sr.set_ssrc(opaque as u32);
-
-						if let Some(mut sender_info) =
-							MutableSenderInfoPacket::new(sr.payload_mut())
-						{
-							let (base_ntp, base_rtp) = ssrc_sr_ntp_rtp_timestamp_map
-								.entry(old_ssrc)
-								.or_insert_with(|| {
-									let ntp =
-										(u64::from(sender_info.get_ntp_timestamp_second()) << 32)
-											+ u64::from(sender_info.get_ntp_timestamp_fraction());
-									(ntp, sender_info.get_rtp_timestamp())
-								});
-
-							let ntp_old = (u64::from(sender_info.get_ntp_timestamp_second()) << 32)
-								+ u64::from(sender_info.get_ntp_timestamp_fraction());
-							let ntp_new = ntp_old.wrapping_sub(*base_ntp);
-
-							sender_info.set_ntp_timestamp_second((ntp_new >> 32) as u32);
-							sender_info.set_ntp_timestamp_fraction(ntp_new as u32);
-							sender_info.set_rtp_timestamp(
-								sender_info.get_rtp_timestamp().wrapping_sub(*base_rtp),
-							);
-
-							let mut cursor = 0;
-							while let Some(mut block) = MutableReportBlockPacket::new(
-								&mut sender_info.payload_mut()[cursor..],
-							) {
-								self.sanitise_rtcp_report_block(
-									&mut block,
-									ssrc_to_opaque,
-									&mut ssrc_ntp_timestamp_map,
-								);
-
-								cursor += block.packet_size();
-							}
-						}
-					},
-					DemuxedMut::Rtcp(M::ReceiverReport(mut rr)) => {
-						let opaque = ssrc_to_opaque
-							.get(&rr.get_ssrc())
-							.copied()
-							.unwrap_or(MISSING_ID as u64);
-						rr.set_ssrc(opaque as u32);
-
-						let mut cursor = 0;
-						while let Some(mut block) =
-							MutableReportBlockPacket::new(&mut rr.payload_mut()[cursor..])
-						{
-							self.sanitise_rtcp_report_block(
-								&mut block,
-								ssrc_to_opaque,
-								&mut ssrc_ntp_timestamp_map,
-							);
-
-							cursor += block.packet_size();
-						}
-					},
-					_ => {},
-				}
+			Event::RtcpData(ref mut bytes) => {
+				self.sanitise_rtcp(
+					bytes,
+					ssrc_to_opaque,
+					&mut ssrc_ntp_timestamp_map,
+					&mut ssrc_sr_ntp_rtp_timestamp_map,
+				);
 			},
 			Event::Speaking(ref mut uid, _) => {
 				*uid = *ssrc_to_opaque
@@ -666,6 +604,118 @@ impl LiveTrace {
 					.get(&UserId(*uid))
 					.unwrap_or(&(MISSING_ID as u64)),
 			_ => {},
+		}
+	}
+
+	pub fn sanitise_rtcp(
+		&mut self,
+		bytes: &mut Vec<u8>,
+		ssrc_to_opaque: &HashMap<u32, u64>,
+		ssrc_ntp_timestamp_map: &mut HashMap<u32, u32>,
+		ssrc_sr_ntp_rtp_timestamp_map: &mut HashMap<u32, (u64, u32)>,
+	) {
+		use MutableRtcpPacket as M;
+		let mut compound_cursor = 0;
+		let pkt_len = bytes.len();
+
+		while compound_cursor < pkt_len {
+			if compound_cursor > 0 {
+				println!("compound_cursor {:?}", &bytes[compound_cursor..]);
+			}
+			match demux::demux_mut(&mut bytes[compound_cursor..]) {
+				DemuxedMut::Rtcp(M::SenderReport(mut sr)) => {
+					let old_ssrc = sr.get_ssrc();
+					let opaque = ssrc_to_opaque
+						.get(&old_ssrc)
+						.copied()
+						.unwrap_or(MISSING_ID as u64);
+					sr.set_ssrc(opaque as u32);
+
+					compound_cursor += sr.packet_size();
+					let n_rx_reports = sr.get_rx_report_count();
+
+					if let Some(mut sender_info) =
+						MutableSenderInfoPacket::new(sr.payload_mut())
+					{
+						let (base_ntp, base_rtp) = ssrc_sr_ntp_rtp_timestamp_map
+							.entry(old_ssrc)
+							.or_insert_with(|| {
+								let ntp =
+									(u64::from(sender_info.get_ntp_timestamp_second()) << 32)
+										+ u64::from(sender_info.get_ntp_timestamp_fraction());
+								(ntp, sender_info.get_rtp_timestamp())
+							});
+
+						let ntp_old = (u64::from(sender_info.get_ntp_timestamp_second()) << 32)
+							+ u64::from(sender_info.get_ntp_timestamp_fraction());
+						let ntp_new = ntp_old.wrapping_sub(*base_ntp);
+
+						sender_info.set_ntp_timestamp_second((ntp_new >> 32) as u32);
+						sender_info.set_ntp_timestamp_fraction(ntp_new as u32);
+						sender_info.set_rtp_timestamp(
+							sender_info.get_rtp_timestamp().wrapping_sub(*base_rtp),
+						);
+
+						let mut blocks = 0;
+						let mut cursor = 0;
+						while let Some(mut block) = MutableReportBlockPacket::new(
+							&mut sender_info.payload_mut()[cursor..],
+						) {
+							self.sanitise_rtcp_report_block(
+								&mut block,
+								ssrc_to_opaque,
+								ssrc_ntp_timestamp_map,
+							);
+
+							cursor += block.packet_size();
+							blocks += 1;
+
+							if blocks >= n_rx_reports {
+								break;
+							}
+						}
+
+						compound_cursor += cursor;
+						compound_cursor += sender_info.packet_size();
+					}
+				},
+				DemuxedMut::Rtcp(M::ReceiverReport(mut rr)) => {
+					let opaque = ssrc_to_opaque
+						.get(&rr.get_ssrc())
+						.copied()
+						.unwrap_or(MISSING_ID as u64);
+					rr.set_ssrc(opaque as u32);
+
+					let n_rx_reports = rr.get_rx_report_count();
+					compound_cursor += rr.packet_size();
+
+					let mut cursor = 0;
+					let mut blocks = 0;
+					while let Some(mut block) =
+						MutableReportBlockPacket::new(&mut rr.payload_mut()[cursor..])
+					{
+						self.sanitise_rtcp_report_block(
+							&mut block,
+							ssrc_to_opaque,
+							ssrc_ntp_timestamp_map,
+						);
+
+						cursor += block.packet_size();
+
+						blocks += 1;
+
+						if blocks >= n_rx_reports {
+							break;
+						}
+					}
+
+					compound_cursor += cursor;
+				},
+				_ => {
+					// This is necessary to prevent an infinite loop from bringing us down!
+					break;
+				},
+			}
 		}
 	}
 
