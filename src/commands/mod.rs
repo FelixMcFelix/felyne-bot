@@ -11,7 +11,7 @@ use serenity::{
 	client::Context,
 	framework::standard::{
 		help_commands,
-		macros::{group, help},
+		macros::{group, help, command},
 		Args,
 		CommandGroup,
 		CommandResult,
@@ -53,7 +53,8 @@ struct Control;
 	remove_server_ack,
 	server_label,
 	server_unlabel,
-	gather_mode
+	gather_mode,
+	nuke
 )]
 struct Admin;
 
@@ -82,4 +83,13 @@ pub async fn my_help(
 
 	let _ = help_commands::with_embeds(context, msg, args, help_options, groups, owners).await;
 	Ok(())
+}
+
+#[command]
+async fn nuke(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
+    if let Err(e) = ctx.shard.temp_shard_restart() {
+        println!("{:?}", e);
+    }
+
+    Ok(())
 }

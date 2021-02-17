@@ -27,3 +27,6 @@ tracing-futures = "0.2"
 [dependencies.felyne-trace]
 path = "felyne-trace"
 features = ["async"]
+
+[patch.crates-io]
+serenity = { path = "../serenity" }
