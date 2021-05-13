@@ -678,6 +678,7 @@ async fn felyne_life(
 							user_states.clone(),
 							guild_state.clone(),
 							guild_id,
+							chan,
 							!stealthy,
 							chan_users,
 							ctx.clone(),

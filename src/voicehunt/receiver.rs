@@ -10,7 +10,7 @@ use flume::{Receiver, Sender, TryRecvError};
 use serenity::{
 	async_trait,
 	client::Context,
-	model::prelude::{GuildId, UserId},
+	model::prelude::{Channel, ChannelId, GuildId, UserId},
 };
 use songbird::{
 	events::{CoreEvent, Event, EventContext, EventHandler},
@@ -38,6 +38,7 @@ pub struct VoiceHuntReceiver {
 	user_states: Arc<UserState>,
 	guild_id: GuildId,
 	guild_state: Arc<RwLock<GuildState>>,
+
 	ctx: Context,
 }
 
@@ -47,6 +48,7 @@ impl VoiceHuntReceiver {
 		gather_mode: GatherMode,
 		user_states: Arc<UserState>,
 		guild_id: GuildId,
+		channel_id: ChannelId,
 		guild_state: Arc<RwLock<GuildState>>,
 		making_noise: bool,
 		initial_user_count: usize,
@@ -66,11 +68,20 @@ impl VoiceHuntReceiver {
 			lock.label()
 		};
 
+		let user_id = ctx.http.get_current_user().await.ok().map(|cu| cu.id);
+		let rtc_region = channel_id
+			.to_channel_cached(&ctx)
+			.await
+			.and_then(Channel::guild)
+			.and_then(|gc| gc.rtc_region);
+
 		Self {
 			trace: Arc::new(RwLock::new(Some(LiveTrace::new(
 				Instant::now(),
 				label,
 				initial_user_count,
+				rtc_region,
+				user_id,
 			)))),
 			rx,
 			tx,
@@ -132,25 +143,16 @@ impl EventHandler for VoiceHuntReceiver {
 
 					None
 				},
-				EventContext::VoicePacket {
-					audio: _,
-					packet,
-					payload_offset,
-					payload_end_pad,
-				} => {
+				EventContext::VoicePacket(vp) => {
 					if let Some(trace) = &mut *self.trace.write().await {
-						trace.packet(time, packet, *payload_offset, *payload_end_pad);
+						trace.packet(time, vp.packet, vp.payload_offset, vp.payload_end_pad);
 					}
 
 					None
 				},
-				EventContext::RtcpPacket {
-					packet,
-					payload_offset,
-					payload_end_pad,
-				} => {
+				EventContext::RtcpPacket(rp) => {
 					if let Some(trace) = &mut *self.trace.write().await {
-						trace.rtcp(time, packet, *payload_offset, *payload_end_pad);
+						trace.rtcp(time, rp.packet, rp.payload_offset, rp.payload_end_pad);
 					}
 
 					None
@@ -169,18 +171,18 @@ impl EventHandler for VoiceHuntReceiver {
 
 					None
 				},
-				EventContext::SpeakingUpdate { ssrc, speaking } => {
+				EventContext::SpeakingUpdate(su) => {
 					if let Some(trace) = &mut *self.trace.write().await {
-						trace.speaking(time, *ssrc, *speaking);
+						trace.speaking(time, su.ssrc, su.speaking);
 					}
 
 					None
 				},
-				EventContext::SsrcKnown(ssrc) => {
-					let user_id = self.ctx.http.get_current_user().await.ok();
-
+				EventContext::DriverConnect(d) | EventContext::DriverReconnect(d) => {
 					if let Some(trace) = &mut *self.trace.write().await {
-						trace.add_my_ssrc(*ssrc, user_id);
+						trace.add_my_ssrc(d.ssrc);
+
+						trace.change_server(time, d.server.to_string())
 					}
 
 					None
@@ -254,6 +256,7 @@ pub async fn listen_in(
 	user_states: Arc<UserState>,
 	guild_state: Arc<RwLock<GuildState>>,
 	guild_id: GuildId,
+	channel_id: ChannelId,
 	making_noise: bool,
 	initial_user_count: usize,
 	ctx: Context,
@@ -266,6 +269,7 @@ pub async fn listen_in(
 			gather_mode,
 			user_states,
 			guild_id,
+			channel_id,
 			guild_state,
 			making_noise,
 			initial_user_count,
@@ -290,7 +294,10 @@ pub async fn listen_in(
 		handler.add_global_event(CoreEvent::ClientDisconnect.into(), n_vhr);
 
 		let n_vhr = vhr.clone();
-		handler.add_global_event(CoreEvent::SsrcKnown.into(), n_vhr);
+		handler.add_global_event(CoreEvent::DriverConnect.into(), n_vhr);
+
+		let n_vhr = vhr.clone();
+		handler.add_global_event(CoreEvent::DriverReconnect.into(), n_vhr);
 
 		handler.add_global_event(CoreEvent::SpeakingUpdate.into(), vhr);
 

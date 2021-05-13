@@ -1,9 +1,6 @@
 use crate::{guild::*, server::Label, UserState};
-use felyne_trace::{traces::FelyneTraceV1, *};
-use serenity::{
-	client::Context,
-	model::prelude::{CurrentUser, UserId},
-};
+use felyne_trace::{traces::FelyneTraceV2, *};
+use serenity::{client::Context, model::prelude::UserId};
 use songbird::{
 	model::payload::Speaking,
 	packet::{
@@ -20,6 +17,7 @@ use std::{
 	time::Instant,
 };
 use tokio::sync::RwLock;
+use tracing::warn;
 
 pub type LocalTimedEvent = (Instant, Event);
 
@@ -30,6 +28,8 @@ pub struct LiveTrace {
 	rtcps: VecDeque<LocalTimedEvent>,
 	my_ssrcs: Vec<u32>,
 	my_uid: Option<UserId>,
+	servers: VecDeque<(Instant, String)>,
+	region_override: Option<String>,
 	start_time: Instant,
 	user_streams: HashMap<u32, VecDeque<LocalTimedEvent>>,
 	lost_events: VecDeque<(u64, LocalTimedEvent)>,
@@ -41,12 +41,20 @@ pub struct LiveTrace {
 }
 
 impl LiveTrace {
-	pub fn new(start_time: Instant, label: Label, users_at_start: usize) -> Self {
+	pub fn new(
+		start_time: Instant,
+		label: Label,
+		users_at_start: usize,
+		region_override: Option<String>,
+		my_uid: Option<UserId>,
+	) -> Self {
 		Self {
 			start_time,
 			label,
 			my_ssrcs: vec![],
-			my_uid: None,
+			my_uid,
+			region_override,
+			servers: Default::default(),
 			rtcps: Default::default(),
 			user_streams: Default::default(),
 			lost_events: Default::default(),
@@ -79,11 +87,12 @@ impl LiveTrace {
 			.or_insert(((packet.sequence.0).0, (packet.timestamp.0).0))
 	}
 
-	pub fn add_my_ssrc(&mut self, ssrc: u32, user_id: Option<CurrentUser>) {
+	pub fn add_my_ssrc(&mut self, ssrc: u32) {
 		self.my_ssrcs.push(ssrc);
-		if let Some(user_id) = user_id {
-			self.my_uid = Some(UserId(user_id.id.0));
-		}
+	}
+
+	pub fn change_server(&mut self, time: Instant, server: String) {
+		self.servers.push_back((time, server));
 	}
 
 	pub fn speaking_state(&mut self, time: Instant, update: &Speaking) {
@@ -250,7 +259,7 @@ impl LiveTrace {
 					pkt_view.set_payload(&sr.payload[payload_offset..right_edge]);
 				}
 
-				bytes
+				Some(bytes)
 			},
 			Rtcp::ReceiverReport(rr) => {
 				let needed = MutableReceiverReportPacket::minimum_packet_size() + rr.payload.len()
@@ -273,13 +282,20 @@ impl LiveTrace {
 					pkt_view.set_payload(&rr.payload[payload_offset..right_edge]);
 				}
 
-				bytes
+				Some(bytes)
 			},
+			Rtcp::KnownType(kt) => {
+				warn!("Songbird can't decode RTCP type {:?}.", kt);
+				None
+			},
+			_ => None,
 		};
 
-		let evt = Event::RtcpData(bytes);
+		if let Some(bytes) = bytes {
+			let evt = Event::RtcpData(bytes);
 
-		self.rtcps.push_back((time, evt))
+			self.rtcps.push_back((time, evt));
+		}
 	}
 
 	pub fn client_connect(&mut self, time: Instant, ssrc: u32, user_id: UserId) {
@@ -366,6 +382,8 @@ impl LiveTrace {
 
 		let total_user_count = self.user_to_ssrcs.len();
 
+		let server = self.servers.pop_front().map(|(_t, s)| s);
+
 		let (events, user_id_to_opaque) = self.unify_event_streams(&users_to_exclude);
 
 		let optout_users = users_to_exclude
@@ -373,11 +391,13 @@ impl LiveTrace {
 			.filter_map(|user_id| user_id_to_opaque.get(user_id).copied())
 			.collect();
 
-		FelyneTrace::Vers1(FelyneTraceV1 {
+		FelyneTrace::Vers2(FelyneTraceV2 {
 			events,
 			length,
 			label: self.label.into(),
 			region,
+			server,
+			region_override: self.region_override.clone(),
 			optout_users,
 			total_user_count,
 			starting_user_count: self.users_at_start,
@@ -398,7 +418,7 @@ impl LiveTrace {
 
 		for _ in 0..unhandled_events {
 			let maybe_found_uid = match self.pull_event() {
-				Some(EventSource::Rtcp(evt)) => {
+				Some(EventSource::Rtcp(evt)) | Some(EventSource::Aux(evt)) => {
 					events.push(evt);
 					None
 				},
@@ -487,10 +507,12 @@ impl LiveTrace {
 			.front()
 			.map(|(u_id, (time, _))| (*u_id, *time));
 
+		let server_change_time = self.servers.front().map(|(time, _)| *time);
+
 		let user_time = user_time_index.map(|(_, t)| t);
 		let sless_time = ssrcless_id_time.map(|(_, t)| t);
 
-		let best_time = &[rtcp_time, user_time, sless_time]
+		let best_time = &[rtcp_time, user_time, sless_time, server_change_time]
 			.iter()
 			.enumerate()
 			.filter_map(|(index, maybe_time)| maybe_time.map(|time| (index, time)))
@@ -523,6 +545,15 @@ impl LiveTrace {
 					.pop_front()
 					.map(|(_, evt)| self.make_event_relative(evt))
 					.map(|evt| EventSource::Ssrcless(u_id, evt))
+			},
+
+			Some((3, _time)) => {
+				//servers
+				self.servers
+					.pop_front()
+					.map(|(t, s)| (t, Event::ChangeServer(s)))
+					.map(|evt| self.make_event_relative(evt))
+					.map(EventSource::Aux)
 			},
 
 			_ => None,
@@ -634,15 +665,12 @@ impl LiveTrace {
 					compound_cursor += sr.packet_size();
 					let n_rx_reports = sr.get_rx_report_count();
 
-					if let Some(mut sender_info) =
-						MutableSenderInfoPacket::new(sr.payload_mut())
-					{
+					if let Some(mut sender_info) = MutableSenderInfoPacket::new(sr.payload_mut()) {
 						let (base_ntp, base_rtp) = ssrc_sr_ntp_rtp_timestamp_map
 							.entry(old_ssrc)
 							.or_insert_with(|| {
-								let ntp =
-									(u64::from(sender_info.get_ntp_timestamp_second()) << 32)
-										+ u64::from(sender_info.get_ntp_timestamp_fraction());
+								let ntp = (u64::from(sender_info.get_ntp_timestamp_second()) << 32)
+									+ u64::from(sender_info.get_ntp_timestamp_fraction());
 								(ntp, sender_info.get_rtp_timestamp())
 							});
 
@@ -658,9 +686,9 @@ impl LiveTrace {
 
 						let mut blocks = 0;
 						let mut cursor = 0;
-						while let Some(mut block) = MutableReportBlockPacket::new(
-							&mut sender_info.payload_mut()[cursor..],
-						) {
+						while let Some(mut block) =
+							MutableReportBlockPacket::new(&mut sender_info.payload_mut()[cursor..])
+						{
 							self.sanitise_rtcp_report_block(
 								&mut block,
 								ssrc_to_opaque,
@@ -753,6 +781,7 @@ enum EventSource {
 	Rtcp(TimedEvent),
 	User(u32, TimedEvent),
 	Ssrcless(u64, TimedEvent),
+	Aux(TimedEvent),
 }
 
 fn filter_packet_event(

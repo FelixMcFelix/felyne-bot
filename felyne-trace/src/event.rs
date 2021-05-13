@@ -50,4 +50,9 @@ pub enum Event {
 	///
 	/// [the voice model page]: https://docs.rs/serenity-voice-model/0.1.0/serenity_voice_model/struct.SpeakingState.html
 	SpeakState(u64, u8),
+	/// Discord changed the RTP server used in this call.
+	///
+	/// This typically happens if an administrator specifically changes the
+	/// guild's (or channel's) voice region.
+	ChangeServer(String),
 }

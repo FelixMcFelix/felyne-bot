@@ -175,7 +175,7 @@ async fn main() {
 	}
 
 	// Now, log in.
-	client.start().await.expect("Argh! I couldn't connyect?!");
+	client.start_autosharded().await.expect("Argh! I couldn't connyect?!");
 
 	println!("Uh");
 }

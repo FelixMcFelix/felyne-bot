@@ -3,11 +3,11 @@ use dashmap::DashMap;
 use serenity::prelude::*;
 use songbird::{
 	self,
+	driver::Bitrate,
 	input::{
 		cached::{Compressed, Memory},
 		Input,
 	},
-	Bitrate,
 };
 use std::{convert::TryInto, sync::Arc};
 
