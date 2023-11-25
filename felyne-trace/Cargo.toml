@@ -6,11 +6,11 @@ edition = "2018"
 
 [dependencies.async-bincode]
 optional = true
-version = "0.6"
+version = "0.7"
 
 [dependencies.async-compression]
 optional = true
-version = "0.3"
+version = "0.4"
 features = ["tokio", "zlib"]
 
 [dependencies.futures]
@@ -26,7 +26,7 @@ default-features = false
 bincode = "1"
 enum_primitive = "0.1"
 flate2 = "1.0"
-phf = { version = "0.8", features = ["macros"] }
+phf = { version = "0.11", features = ["macros"] }
 serde = { version = "1", features = ["derive"] }
 
 [features]

@@ -19,7 +19,7 @@ pub mod traces;
 pub use self::{consts::*, event::*, extension::*, label::*, traces::FelyneTrace};
 
 #[cfg(feature = "async")]
-use async_bincode::{AsyncBincodeReader, AsyncBincodeWriter};
+use async_bincode::tokio::{AsyncBincodeReader, AsyncBincodeWriter};
 #[cfg(feature = "async")]
 use async_compression::{
 	tokio::bufread::ZlibDecoder as AsyncZlibDecoder,
