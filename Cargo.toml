@@ -27,3 +27,8 @@ tracing-futures = "0.2"
 [dependencies.felyne-trace]
 path = "felyne-trace"
 features = ["async"]
+
+[dependencies.symphonia]
+version = "0.5"
+no-default-features = true
+features = ["adpcm", "pcm", "ogg", "wav"] # ...as well as any extras you need!
