@@ -30,5 +30,5 @@ features = ["async"]
 
 [dependencies.symphonia]
 version = "0.5"
-no-default-features = true
+default-features = false
 features = ["adpcm", "pcm", "ogg", "wav"] # ...as well as any extras you need!
