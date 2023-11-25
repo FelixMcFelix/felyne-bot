@@ -1,7 +1,13 @@
 use crate::{constants::*, guild::GuildStates};
 use dashmap::DashMap;
 use rand::random;
-use serenity::{client::*, model::prelude::*, prelude::*, utils::*};
+use serenity::{
+	builder::{CreateAttachment, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateMessage},
+	client::*,
+	model::prelude::*,
+	prelude::*,
+	utils::*,
+};
 use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::*;
@@ -167,7 +173,7 @@ async fn report_delete(
 		let recovered = msgs.iter().find(|message| message.0.id == removed_msg);
 
 		if let Some((message, attachments_holder)) = recovered {
-			content = message.content_safe(&ctx.cache).await;
+			content = message.content_safe(&ctx.cache);
 
 			attachment_text = match attachments_holder.store.len() {
 				0 => String::new(),
@@ -184,33 +190,31 @@ async fn report_delete(
 			author_img = author.face();
 		}
 
-		match out_channel
-			.send_message(&ctx.http, |m| {
-				m.embed(|e| {
-					let base = e
-						.colour(Colour::from_rgb(236, 98, 0))
-						.author(|a| a.name(author_name.as_str()).icon_url(author_img.as_str()))
-						.description(format!(
-							"**Grraow?! (Myessage by {} in {} stolen!)**\n{}",
-							author_mention,
-							chan.mention(),
-							content
-						))
-						.footer(|f| {
-							f.text(format!(
-								"ID: {}. Nyarowr... (I think that {} has it...)",
-								removed_msg,
-								MONSTERS[random::<usize>() % MONSTERS.len()]
-							))
-						});
+		let embed_author = CreateEmbedAuthor::new(author_name).icon_url(author_img);
 
-					if !attachment_text.is_empty() {
-						base.field("I think they dropped something!", attachment_text, true)
-					} else {
-						base
-					}
-				})
-			})
+		let embed = CreateEmbed::new()
+			.colour(Colour::from_rgb(236, 98, 0))
+			.author(embed_author)
+			.description(format!(
+				"**Grraow?! (Myessage by {} in {} stolen!)**\n{}",
+				author_mention,
+				chan.mention(),
+				content
+			))
+			.footer(CreateEmbedFooter::new(format!(
+				"ID: {}. Nyarowr... (I think that {} has it...)",
+				removed_msg,
+				MONSTERS[random::<usize>() % MONSTERS.len()]
+			)));
+
+		let embed = if !attachment_text.is_empty() {
+			embed.field("I think they dropped something!", attachment_text, true)
+		} else {
+			embed
+		};
+
+		match out_channel
+			.send_message(&ctx.http, CreateMessage::new().embed(embed))
 			.await
 		{
 			Ok(_) => {},
@@ -224,16 +228,22 @@ async fn report_delete(
 				let maybe_file = locked_maybe_file.lock().await;
 				match *maybe_file {
 					Some(ref val) => {
-						let block = vec![(val.as_slice(), name.as_str())];
+						let block = CreateAttachment::bytes(val.as_slice(), name);
 						let _ = out_channel
-							.send_files(&ctx.http, block, |m| m.content(format!("File {}!", i)))
+							.send_files(
+								&ctx.http,
+								[block; 1],
+								CreateMessage::new().content(format!("File {}!", i)),
+							)
 							.await;
 					},
 					None => {
 						let _ = out_channel
-							.send_message(&ctx.http, |m| {
-								m.content(format!("Couldn't recover file {}...", i))
-							})
+							.send_message(
+								&ctx.http,
+								CreateMessage::new()
+									.content(format!("Couldn't recover file {}...", i)),
+							)
 							.await;
 					},
 				}

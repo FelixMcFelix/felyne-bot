@@ -117,7 +117,7 @@ impl OptInOut {
 
 	pub fn to_role(self) -> Option<i64> {
 		match self {
-			Self::UserIn(a) => Some(a.0 as i64),
+			Self::UserIn(a) => Some(a.get() as i64),
 			_ => None,
 		}
 	}
@@ -139,11 +139,18 @@ impl OptInOut {
 					.single::<String>()
 					.map_err(|_| ConfigParseError::MissingRole)?;
 
-				let role = serenity::utils::parse_mention(role.as_str())
-					.or_else(|| role.parse::<u64>().ok());
+				let role = serenity::utils::parse_role_mention(role.as_str()).or_else(|| {
+					role.parse::<u64>().ok().and_then(|v| {
+						if v == 0 {
+							None
+						} else {
+							Some(RoleId::new(v))
+						}
+					})
+				});
 
 				if let Some(role) = role {
-					Ok(Some(Self::UserIn(RoleId(role))))
+					Ok(Some(OptInOut::UserIn(role)))
 				} else {
 					Err(ConfigParseError::IllegalRole)
 				}
@@ -156,7 +163,7 @@ impl OptInOut {
 		match self {
 			Self::ServerIn => "".to_string(),
 			Self::ServerOut => " never".to_string(),
-			Self::UserIn(r) => match r.to_role_cached(ctx).await {
+			Self::UserIn(r) => match r.to_role_cached(ctx) {
 				Some(role) => format!(" to folks with the role `{}`", role.name),
 				None => format!(" to folks with the role ID {}", r),
 			},
@@ -183,7 +190,7 @@ impl From<&Row> for OptInOut {
 			OptInOutMode::ServerIn => Self::ServerIn,
 			OptInOutMode::UserIn => {
 				let i_role: i64 = row.get(1);
-				Self::UserIn(RoleId(i_role as u64))
+				Self::UserIn(RoleId::new(i_role as u64))
 			},
 			OptInOutMode::ServerOut => Self::ServerOut,
 		}
@@ -238,7 +245,7 @@ impl Control {
 
 	pub fn to_role(self) -> Option<i64> {
 		match self {
-			Self::WithRole(a) => Some(a.0 as i64),
+			Self::WithRole(a) => Some(a.get() as i64),
 			_ => None,
 		}
 	}
@@ -260,11 +267,18 @@ impl Control {
 					.single::<String>()
 					.map_err(|_| ConfigParseError::MissingRole)?;
 
-				let role = serenity::utils::parse_mention(role.as_str())
-					.or_else(|| role.parse::<u64>().ok());
+				let role = serenity::utils::parse_role_mention(role.as_str()).or_else(|| {
+					role.parse::<u64>().ok().and_then(|v| {
+						if v == 0 {
+							None
+						} else {
+							Some(RoleId::new(v))
+						}
+					})
+				});
 
 				if let Some(role) = role {
-					Ok(Some(Control::WithRole(RoleId(role))))
+					Ok(Some(Control::WithRole(role)))
 				} else {
 					Err(ConfigParseError::IllegalRole)
 				}
@@ -277,7 +291,7 @@ impl Control {
 		match self {
 			Self::OwnerOnly => "only the owner".to_string(),
 			Self::All => "anyone".to_string(),
-			Self::WithRole(r) => match r.to_role_cached(ctx).await {
+			Self::WithRole(r) => match r.to_role_cached(ctx) {
 				Some(role) => role.name,
 				None => format!("{}", r),
 			},
@@ -294,7 +308,7 @@ impl From<&Row> for Control {
 			ControlMode::All => Self::All,
 			ControlMode::WithRole => {
 				let i_role: i64 = row.get(1);
-				Self::WithRole(RoleId(i_role as u64))
+				Self::WithRole(RoleId::new(i_role as u64))
 			},
 		}
 	}

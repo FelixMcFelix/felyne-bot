@@ -17,8 +17,8 @@ use std::sync::Arc;
 #[owner_privilege]
 pub async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
-	let guild = match msg.guild(&ctx.cache).await {
-		Some(c) => c.id,
+	let guild = match msg.guild_id {
+		Some(c) => c,
 		None => {
 			return confused(&ctx, &msg).await;
 		},
@@ -34,13 +34,16 @@ pub async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 		&ctx,
 		guild,
 		match args.single::<u64>().ok() {
+			Some(0) => Err("Mya ro-rowr? ()".to_string())?,
 			Some(c) => {
+				let chan_id = ChannelId::new(c);
+
 				if let Some(state) = gs.get(&guild) {
 					let mut lock = state.write().await;
-					lock.set_join(Join::DirectedHunt(ChannelId(c))).await;
+					lock.set_join(Join::DirectedHunt(chan_id)).await;
 				}
 
-				VoiceHuntCommand::DirectedHunt(ChannelId(c))
+				VoiceHuntCommand::DirectedHunt(chan_id)
 			},
 			None => {
 				if let Some(state) = gs.get(&guild) {
@@ -64,8 +67,8 @@ pub async fn hunt(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult
 #[owner_privilege]
 pub async fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
-	let guild = match msg.guild(&ctx.cache).await {
-		Some(c) => c.id,
+	let guild = match msg.guild_id {
+		Some(c) => c,
 		None => {
 			return confused(&ctx, &msg).await;
 		},
@@ -94,8 +97,8 @@ pub async fn watch(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 #[owner_privilege]
 pub async fn cart(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
-	let guild = match msg.guild(&ctx.cache).await {
-		Some(c) => c.id,
+	let guild = match msg.guild_id {
+		Some(c) => c,
 		None => {
 			return confused(&ctx, &msg).await;
 		},
@@ -124,8 +127,8 @@ pub async fn cart(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 #[owner_privilege]
 pub async fn volume(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 	// Get the guild ID.
-	let guild = match msg.guild(&ctx.cache).await {
-		Some(c) => c.id,
+	let guild = match msg.guild_id {
+		Some(c) => c,
 		None => {
 			return confused(&ctx, &msg).await;
 		},

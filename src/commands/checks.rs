@@ -83,7 +83,7 @@ async fn shared_ctl_check(
 	use CfgControl::*;
 
 	(match control {
-		OwnerOnly => msg.guild(ctx).await.map(|guild| {
+		OwnerOnly => msg.guild(&ctx.cache).map(|guild| {
 			if guild.owner_id == msg.author.id {
 				Ok(())
 			} else {

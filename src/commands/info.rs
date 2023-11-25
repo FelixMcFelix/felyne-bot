@@ -2,6 +2,7 @@ use super::*;
 
 use crate::GuildStates;
 use serenity::{
+	builder::CreateMessage,
 	client::*,
 	framework::standard::{macros::command, Args, CommandResult},
 	model::prelude::*,
@@ -30,7 +31,7 @@ pub async fn info(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 		return Ok(());
 	}
 
-	let guild = match msg.guild(&ctx.cache).await {
+	let guild = match msg.guild_id {
 		Some(c) => c,
 		None => {
 			return confused(&ctx, &msg).await;
@@ -42,7 +43,7 @@ pub async fn info(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 		Arc::clone(data.get::<GuildStates>().unwrap())
 	};
 
-	let reply_txt = if let Some(state) = gs.get(&guild.id) {
+	let reply_txt = if let Some(state) = gs.get(&guild) {
 		let lock = state.read().await;
 		lock.to_info_message(ctx, &msg.author, msg.guild_id.unwrap_or_default())
 			.await
@@ -50,7 +51,11 @@ pub async fn info(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 		"Hiss... (I couldn't find any relevant info for your server...)".into()
 	};
 
-	check_msg(msg.author.dm(&ctx, |m| m.content(reply_txt)).await);
+	check_msg(
+		msg.author
+			.dm(&ctx, CreateMessage::new().content(reply_txt))
+			.await,
+	);
 
 	Ok(())
 }

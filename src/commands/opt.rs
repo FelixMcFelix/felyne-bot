@@ -3,6 +3,7 @@ use super::*;
 use crate::{config::OptInOut, dbs::*, guild::*, user::UserStateKey};
 
 use serenity::{
+	builder::EditMember,
 	client::*,
 	framework::standard::{macros::command, Args, CommandResult},
 	model::prelude::*,
@@ -35,7 +36,7 @@ pub async fn optout(ctx: &Context, msg: &Message, _args: Args) -> CommandResult 
 #[only_in(guilds)]
 pub async fn optin(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 	// Get the guild ID.
-	let guild = match msg.guild(&ctx.cache).await {
+	let guild = match msg.guild_id {
 		Some(c) => c,
 		None => {
 			return confused(&ctx, &msg).await;
@@ -52,7 +53,7 @@ pub async fn optin(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 
 	us.optin(msg.author.id).await;
 
-	if let Some(gs) = gs.get(&guild.id) {
+	if let Some(gs) = gs.get(&guild) {
 		let kind = {
 			let lock = gs.read().await;
 			lock.server_opt()
@@ -69,8 +70,7 @@ pub async fn optin(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 				);
 			},
 			OptInOut::UserIn(r) => {
-				let role_added = guild.member(ctx, msg.author.id).await;
-				let role_added = match role_added {
+				let role_added = match msg.member(&ctx).await {
 					Ok(mut member) => member.add_role(ctx, r).await,
 					Err(e) => Err(e),
 				};
@@ -80,10 +80,10 @@ pub async fn optin(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
 				} else {
 					format!(
 						"Mrowr?! (I couldn't give you the role {}. Ask an admin?!)",
-						if let Some(r_full) = r.to_role_cached(ctx).await {
+						if let Some(r_full) = r.to_role_cached(ctx) {
 							r_full.name
 						} else {
-							format!("(ID {:?})", r.0)
+							format!("(ID {:?})", r.get())
 						}
 					)
 				};

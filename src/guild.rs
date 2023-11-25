@@ -50,7 +50,7 @@ impl GuildState {
 
 		let voicehunt_mode = db.select_join_cfg(guild).await.unwrap_or_default();
 
-		let watchcat_domain = db.select_watchcat(guild).await.ok().map(ChannelId);
+		let watchcat_domain = db.select_watchcat(guild).await.ok().map(ChannelId::new);
 
 		Self {
 			db,
@@ -114,9 +114,8 @@ impl GuildState {
 			"Hello! Here's how I work in {}",
 			self.guild
 				.to_guild_cached(ctx)
-				.await
-				.map(|g| g.name)
-				.unwrap_or_else(|| "<No name!>".to_string())
+				.map(|g| g.name.clone())
+				.unwrap_or("<No name!>".to_string())
 		));
 
 		builder.push_line_safe(format!(

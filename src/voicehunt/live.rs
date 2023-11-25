@@ -97,7 +97,7 @@ impl LiveTrace {
 
 	pub fn speaking_state(&mut self, time: Instant, update: &Speaking) {
 		if let Some(u_id) = update.user_id {
-			self.register_ssrc_userid(update.ssrc, UserId(u_id.0));
+			self.register_ssrc_userid(update.ssrc, UserId::new(u_id.0));
 
 			self.push_event(
 				time,
@@ -299,13 +299,13 @@ impl LiveTrace {
 	}
 
 	pub fn client_connect(&mut self, time: Instant, ssrc: u32, user_id: UserId) {
-		self.register_ssrc_userid(ssrc, UserId(user_id.0));
+		self.register_ssrc_userid(ssrc, UserId::new(user_id.get()));
 
-		self.push_event(time, ssrc, Event::Connect(user_id.0))
+		self.push_event(time, ssrc, Event::Connect(user_id.get()))
 	}
 
 	pub fn client_disconnect(&mut self, time: Instant, user_id: UserId) {
-		let evt = Event::Disconnect(user_id.0);
+		let evt = Event::Disconnect(user_id.get());
 
 		let ssrc_to_push = if let Some(ssrc_list) = self.user_to_ssrcs.get(&user_id) {
 			let ssrc = ssrc_list
@@ -320,7 +320,7 @@ impl LiveTrace {
 		if let Some(ssrc) = ssrc_to_push {
 			self.push_event(time, ssrc, evt);
 		} else {
-			self.push_ssrcless_event(time, user_id.0, evt);
+			self.push_ssrcless_event(time, user_id.get(), evt);
 		}
 	}
 
@@ -350,11 +350,8 @@ impl LiveTrace {
 			(guild_id, server_opt)
 		};
 
-		let region = guild_id
-			.to_partial_guild(ctx)
-			.await
-			.map(|pg| pg.region)
-			.ok();
+		// TODO: fix
+		let region = None;
 
 		let mut users_to_exclude = HashSet::new();
 
@@ -432,14 +429,14 @@ impl LiveTrace {
 						let mut trial = 0u64;
 
 						loop {
-							if self.user_to_ssrcs.contains_key(&UserId(trial)) {
+							if self.user_to_ssrcs.contains_key(&UserId::new(trial)) {
 								trial += 1;
 							} else {
 								break;
 							}
 						}
 
-						let u_id = UserId(trial);
+						let u_id = UserId::new(trial);
 						self.register_ssrc_userid(ssrc, u_id);
 						u_id
 					};
@@ -450,7 +447,7 @@ impl LiveTrace {
 				},
 				Some(EventSource::Ssrcless(u_id, evt)) => {
 					events.push(evt);
-					Some(UserId(u_id))
+					Some(UserId::new(u_id))
 				},
 				None => {
 					eprintln!("Tried to pull extra event!");
@@ -624,15 +621,15 @@ impl LiveTrace {
 			// These already contain UserIDs
 			Event::Connect(ref mut uid) =>
 				*uid = *user_to_opaque
-					.get(&UserId(*uid))
+					.get(&UserId::new(*uid))
 					.unwrap_or(&(MISSING_ID as u64)),
 			Event::Disconnect(ref mut uid) =>
 				*uid = *user_to_opaque
-					.get(&UserId(*uid))
+					.get(&UserId::new(*uid))
 					.unwrap_or(&(MISSING_ID as u64)),
 			Event::SpeakState(ref mut uid, _) =>
 				*uid = *user_to_opaque
-					.get(&UserId(*uid))
+					.get(&UserId::new(*uid))
 					.unwrap_or(&(MISSING_ID as u64)),
 			_ => {},
 		}

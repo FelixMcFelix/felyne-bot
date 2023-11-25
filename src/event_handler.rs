@@ -1,6 +1,6 @@
 use crate::{guild::*, voicehunt::*, watchcat::*, Db};
 
-use serenity::{async_trait, client::*, model::prelude::*};
+use serenity::{async_trait, client::*, gateway::ActivityData, model::prelude::*};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -12,7 +12,7 @@ impl EventHandler for FelyneEvts {
 		// Place the message in our "deleted messages cache".
 		// This should probably be the last action...
 		// Get the guild ID.
-		let guild_id = match msg.guild(&ctx.cache).await {
+		let guild_id = match msg.guild(&ctx.cache) {
 			Some(guild) => guild.id,
 			None => {
 				return;
@@ -52,7 +52,7 @@ impl EventHandler for FelyneEvts {
 	}
 
 	// Should provide us with a set of full guild info as we connect to each!
-	async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: bool) {
+	async fn guild_create(&self, ctx: Context, guild: Guild, _is_new: Option<bool>) {
 		{
 			let datas = ctx.data.read().await;
 			let db = datas.get::<Db>().unwrap().clone();
@@ -69,18 +69,16 @@ impl EventHandler for FelyneEvts {
 	async fn voice_state_update(
 		&self,
 		ctx: Context,
-		maybe_guild: Option<GuildId>,
 		_old_vox: Option<VoiceState>,
 		vox: VoiceState,
 	) {
-		if let Some(guild_id) = maybe_guild {
+		if let Some(guild_id) = vox.guild_id {
 			voicehunt_update(&ctx, guild_id, vox).await;
 		}
 	}
 
 	async fn ready(&self, ctx: Context, _rdy: Ready) {
 		println!("Connyected!");
-		ctx.set_activity(Activity::listening("scary monsters!"))
-			.await;
+		ctx.set_activity(Some(ActivityData::listening("scary monsters!")));
 	}
 }

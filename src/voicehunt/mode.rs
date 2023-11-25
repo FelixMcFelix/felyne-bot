@@ -34,7 +34,7 @@ impl Join {
 
 	pub fn to_channel(self) -> Option<i64> {
 		match self {
-			Self::DirectedHunt(a) => Some(a.0 as i64),
+			Self::DirectedHunt(a) => Some(i64::from(a)),
 			_ => None,
 		}
 	}
@@ -45,8 +45,8 @@ impl Join {
 			Self::Watch => "hanging out quietly".to_string(),
 			Self::Hunt => "hunting".to_string(),
 			Self::DirectedHunt(r) => match r.name(ctx).await {
-				Some(chan) => format!("hunting in `{}`", chan),
-				None => format!("hunting in a channel with the ID {}", r),
+				Ok(chan) => format!("hunting in `{}`", chan),
+				Err(_) => format!("hunting in a channel with the ID {}", r),
 			},
 		}
 	}
@@ -70,7 +70,7 @@ impl From<&Row> for Join {
 			JoinMode::Hunt => Self::Hunt,
 			JoinMode::DirectedHunt => {
 				let i_role: i64 = row.get(1);
-				Self::DirectedHunt(ChannelId(i_role as u64))
+				Self::DirectedHunt(ChannelId::new(i_role as u64))
 			},
 			JoinMode::Watch => Self::Watch,
 		}

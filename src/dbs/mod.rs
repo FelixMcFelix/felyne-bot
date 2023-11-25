@@ -104,8 +104,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_watchcat(&self, guild_id: GuildId) -> Result<u64, SqlError> {
-		let GuildId(t_id) = guild_id;
-		let t_id = t_id as i64;
+		let t_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectUndelete);
 
@@ -117,10 +116,8 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_watchcat(&self, guild_id: GuildId, channel_id: ChannelId) {
-		let GuildId(t_id) = guild_id;
-		let ChannelId(t_c_id) = channel_id;
-		let t_id = t_id as i64;
-		let t_c_id = t_c_id as i64;
+		let t_id = i64::from(guild_id);
+		let t_c_id = i64::from(channel_id);
 
 		let query = self.get_statement(Query::UpsertUndelete);
 
@@ -133,8 +130,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_prefix(&self, guild_id: GuildId) -> Result<String, SqlError> {
-		let GuildId(t_id) = guild_id;
-		let t_id = t_id as i64;
+		let t_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectPrefix);
 
@@ -146,8 +142,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_prefix(&self, guild_id: GuildId, prefix: &str) {
-		let GuildId(t_id) = guild_id;
-		let t_id = t_id as i64;
+		let t_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::UpsertPrefix);
 
@@ -169,7 +164,7 @@ impl FelyneDb {
 			rows.into_iter()
 				.map(|row| {
 					let a: i64 = row.get(0);
-					UserId(a as u64)
+					UserId::from(a as u64)
 				})
 				.collect()
 		})
@@ -177,7 +172,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_optout(&self, user_id: UserId) {
-		let u_id = user_id.0 as i64;
+		let u_id = i64::from(user_id);
 
 		let query = self.get_statement(Query::UpsertOptOut);
 
@@ -190,7 +185,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn delete_optout(&self, user_id: UserId) {
-		let u_id = user_id.0 as i64;
+		let u_id = i64::from(user_id);
 
 		let query = self.get_statement(Query::DeleteOptOut);
 
@@ -203,7 +198,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_gather_cfg(&self, guild_id: GuildId) -> Result<GatherMode, SqlError> {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectGather);
 
@@ -215,7 +210,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_gather_cfg(&self, guild_id: GuildId, mode: GatherMode) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::UpsertGather);
 
@@ -228,7 +223,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_join_cfg(&self, guild_id: GuildId) -> Result<Join, SqlError> {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectJoin);
 
@@ -240,7 +235,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_join_cfg(&self, guild_id: GuildId, mode: Join) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::UpsertJoin);
 
@@ -263,7 +258,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_control_cfg(&self, guild_id: GuildId) -> Result<Control, SqlError> {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectVoiceCtl);
 
@@ -275,7 +270,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_control_cfg(&self, guild_id: GuildId, mode: Control) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::UpsertVoiceCtl);
 
@@ -294,7 +289,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_control_admin_cfg(&self, guild_id: GuildId) -> Result<Control, SqlError> {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectAdminCtl);
 
@@ -306,7 +301,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_control_admin_cfg(&self, guild_id: GuildId, mode: Control) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::UpsertAdminCtl);
 
@@ -328,7 +323,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_opt_in_out(&self, guild_id: GuildId) -> Result<OptInOut, SqlError> {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectServerOptIn);
 
@@ -340,7 +335,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_opt_in_out(&self, guild_id: GuildId, mode: OptInOut) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::UpsertServerOptIn);
 
@@ -359,7 +354,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_server_type(&self, guild_id: GuildId) -> Result<Label, SqlError> {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectLabel);
 
@@ -371,7 +366,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_server_type(&self, guild_id: GuildId, label: Label) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::UpsertLabel);
 
@@ -384,7 +379,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn delete_server_type(&self, guild_id: GuildId) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::DeleteLabel);
 
@@ -397,7 +392,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_guild_ack(&self, guild_id: GuildId) -> Result<String, SqlError> {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::SelectGuildAck);
 
@@ -409,7 +404,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_guild_ack(&self, guild_id: GuildId, ack: &str) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::UpsertGuildAck);
 
@@ -422,7 +417,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn delete_guild_ack(&self, guild_id: GuildId) {
-		let g_id = guild_id.0 as i64;
+		let g_id = i64::from(guild_id);
 
 		let query = self.get_statement(Query::DeleteGuildAck);
 
@@ -435,7 +430,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn select_user_ack(&self, user_id: UserId) -> Result<String, SqlError> {
-		let g_id = user_id.0 as i64;
+		let g_id = i64::from(user_id);
 
 		let query = self.get_statement(Query::SelectAck);
 
@@ -447,7 +442,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn upsert_user_ack(&self, user_id: UserId, ack: &str) {
-		let g_id = user_id.0 as i64;
+		let g_id = i64::from(user_id);
 
 		let query = self.get_statement(Query::UpsertAck);
 
@@ -460,7 +455,7 @@ impl FelyneDb {
 
 	#[inline]
 	pub async fn delete_user_ack(&self, user_id: UserId) {
-		let g_id = user_id.0 as i64;
+		let g_id = i64::from(user_id);
 
 		let query = self.get_statement(Query::DeleteAck);
 

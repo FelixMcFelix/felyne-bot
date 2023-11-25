@@ -3,13 +3,9 @@ use dashmap::DashMap;
 use serenity::prelude::*;
 use songbird::{
 	self,
-	driver::Bitrate,
-	input::{
-		cached::{Compressed, Memory},
-		Input,
-	},
+	input::{File, Input},
 };
-use std::{convert::TryInto, sync::Arc};
+use std::sync::Arc;
 
 pub struct Resources;
 
@@ -19,32 +15,25 @@ impl TypeMapKey for Resources {
 	type Value = RxMap;
 }
 
-pub enum CachedSound {
-	Compressed(Compressed),
-	Uncompressed(Memory),
-}
+pub struct CachedSound(File<String>);
 
 impl From<&CachedSound> for Input {
 	fn from(obj: &CachedSound) -> Self {
-		use CachedSound::*;
-		match obj {
-			Compressed(c) => c.new_handle().into(),
-			Uncompressed(u) => u.new_handle().try_into().unwrap(),
-		}
+		obj.0.clone().into()
 	}
 }
 
 pub async fn preload_resources() -> RxMap {
 	let resources = DashMap::new();
-	add_resources(&resources, "bgm", BBQ, false).await;
-	add_resources(&resources, "bgm", BBQ_RESULT, false).await;
-	add_resources(&resources, "bgm", SLEEP, true).await;
-	add_resources(&resources, "bgm", START, true).await;
-	add_resources(&resources, "bgm", AMBIENCE, true).await;
-	add_resources(&resources, "bgm", BGM, true).await;
+	add_resources(&resources, "bgm", BBQ).await;
+	add_resources(&resources, "bgm", BBQ_RESULT).await;
+	add_resources(&resources, "bgm", SLEEP).await;
+	add_resources(&resources, "bgm", START).await;
+	add_resources(&resources, "bgm", AMBIENCE).await;
+	add_resources(&resources, "bgm", BGM).await;
 
-	add_resources(&resources, "sfx", SFX, false).await;
-	add_resources(&resources, "sfx", BONUS_SFX, false).await;
+	add_resources(&resources, "sfx", SFX).await;
+	add_resources(&resources, "sfx", BONUS_SFX).await;
 
 	Arc::new(resources)
 }
@@ -53,23 +42,11 @@ async fn add_resources<'a>(
 	rx: &'a DashMap<&'static str, CachedSound>,
 	folder: &'static str,
 	files: &'static [&'static str],
-	compress: bool,
 ) {
 	for file_id in files {
-		let file_name = format!("{}/{}", folder, file_id);
-		let base = songbird::ffmpeg(&file_name)
-			.await
-			.expect("File should be in root folder.");
-		let file = if compress {
-			let src = Compressed::new(base, Bitrate::BitsPerSecond(128_000))
-				.expect("Apparent critical failure to make file...");
-			let _ = src.raw.spawn_loader();
-			CachedSound::Compressed(src)
-		} else {
-			let src = Memory::new(base).expect("Apparent critical failure to make file...");
-			let _ = src.raw.spawn_loader();
-			CachedSound::Uncompressed(src)
-		};
-		rx.insert(file_id, file);
+		rx.insert(
+			file_id,
+			CachedSound(File::new(format!("{}/{}", folder, file_id))),
+		);
 	}
 }

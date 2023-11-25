@@ -434,7 +434,7 @@ fn play_bgm(
 
 	resources
 		.get(random_element(el_list))
-		.map(|guard| vox.play_source(guard.value().into()))
+		.map(|guard| vox.play(guard.value().into()))
 		.map(move |track| {
 			let _ = track.add_event(
 				Event::Track(TrackEvent::End),
@@ -485,7 +485,7 @@ fn play_sfx(
 
 	resources
 		.get(random_element(el_list))
-		.map(|guard| vox.play_source(guard.value().into()))
+		.map(|guard| vox.play(guard.value().into()))
 		.map(move |track| {
 			let _ = track.add_event(
 				Event::Track(TrackEvent::End),
@@ -662,7 +662,7 @@ async fn felyne_life(
 					curr_sfx = None;
 					curr_bgm = None;
 
-					if manager.join(chan.into()).await.is_ok() {
+					if manager.join(chan).await.is_ok() {
 						// test play
 						manager.stop();
 
@@ -759,15 +759,19 @@ async fn felyne_life(
 			Ok(VoiceHuntMessage::Volume(new_vol)) => {
 				if let Some(track) = curr_sfx.as_ref() {
 					let _ = track.action(move |true_track| {
-						let vol = true_track.volume();
-						let _ = true_track.set_volume((vol / curr_vol) * new_vol);
+						let vol = *true_track.volume;
+						*true_track.volume = (vol / curr_vol) * new_vol;
+
+						None
 					});
 				}
 
 				if let Some(track) = curr_bgm.as_ref() {
 					let _ = track.action(move |true_track| {
-						let vol = true_track.volume();
-						let _ = true_track.set_volume((vol / curr_vol) * new_vol);
+						let vol = *true_track.volume;
+						*true_track.volume = (vol / curr_vol) * new_vol;
+
+						None
 					});
 				}
 
@@ -873,7 +877,7 @@ pub async fn voicehunt_control(ctx: &Context, guild_id: GuildId, mode: VoiceHunt
 			.get::<SongbirdKey>()
 			.cloned()
 			.unwrap()
-			.get_or_insert(guild_id.into());
+			.get_or_insert(guild_id);
 
 		let resources = datas
 			.get::<Resources>()
@@ -930,14 +934,14 @@ async fn try_create_vh_state(ctx: &Context, guild_id: GuildId) -> Arc<Mutex<VHSt
 		.get::<SongbirdKey>()
 		.cloned()
 		.unwrap()
-		.get_or_insert(guild_id.into());
+		.get_or_insert(guild_id);
 
 	let resources = datas
 		.get::<Resources>()
 		.expect("Resources must exists after init...")
 		.clone();
 
-	let u_id = ctx.cache.current_user_id().await;
+	let u_id = ctx.cache.current_user().id;
 
 	let guild_state = datas
 		.get::<GuildStates>()

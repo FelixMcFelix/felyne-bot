@@ -69,11 +69,7 @@ impl VoiceHuntReceiver {
 		};
 
 		let user_id = ctx.http.get_current_user().await.ok().map(|cu| cu.id);
-		let rtc_region = channel_id
-			.to_channel_cached(&ctx)
-			.await
-			.and_then(Channel::guild)
-			.and_then(|gc| gc.rtc_region);
+		let rtc_region = None;
 
 		Self {
 			trace: Arc::new(RwLock::new(Some(LiveTrace::new(
@@ -123,75 +119,77 @@ impl VoiceHuntReceiver {
 	}
 }
 
-#[async_trait]
-impl EventHandler for VoiceHuntReceiver {
-	async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
-		let time = Instant::now();
+// Disable voice hunt receive: I'm not too interested in measuring this anymore.
 
-		if self.handle_possible_cancel() {
-			Some(Event::Cancel)
-		} else {
-			if self.do_nothing.load(Ordering::Relaxed) {
-				return None;
-			}
+// #[async_trait]
+// impl EventHandler for VoiceHuntReceiver {
+// 	async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+// 		let time = Instant::now();
 
-			match ctx {
-				EventContext::SpeakingStateUpdate(s) => {
-					if let Some(trace) = &mut *self.trace.write().await {
-						trace.speaking_state(time, s);
-					}
+// 		if self.handle_possible_cancel() {
+// 			Some(Event::Cancel)
+// 		} else {
+// 			if self.do_nothing.load(Ordering::Relaxed) {
+// 				return None;
+// 			}
 
-					None
-				},
-				EventContext::VoicePacket(vp) => {
-					if let Some(trace) = &mut *self.trace.write().await {
-						trace.packet(time, vp.packet, vp.payload_offset, vp.payload_end_pad);
-					}
+// 			match ctx {
+// 				EventContext::SpeakingStateUpdate(s) => {
+// 					if let Some(trace) = &mut *self.trace.write().await {
+// 						trace.speaking_state(time, s);
+// 					}
 
-					None
-				},
-				EventContext::RtcpPacket(rp) => {
-					if let Some(trace) = &mut *self.trace.write().await {
-						trace.rtcp(time, rp.packet, rp.payload_offset, rp.payload_end_pad);
-					}
+// 					None
+// 				},
+// 				EventContext::RtpPacket(vp) => {
+// 					if let Some(trace) = &mut *self.trace.write().await {
+// 						trace.packet(time, vp.packet, vp.payload_offset, vp.payload_end_pad);
+// 					}
 
-					None
-				},
-				EventContext::ClientConnect(s) => {
-					if let Some(trace) = &mut *self.trace.write().await {
-						trace.client_connect(time, s.audio_ssrc, UserId(s.user_id.0));
-					}
+// 					None
+// 				},
+// 				EventContext::RtcpPacket(rp) => {
+// 					if let Some(trace) = &mut *self.trace.write().await {
+// 						trace.rtcp(time, rp.packet, rp.payload_offset, rp.payload_end_pad);
+// 					}
 
-					None
-				},
-				EventContext::ClientDisconnect(s) => {
-					if let Some(trace) = &mut *self.trace.write().await {
-						trace.client_disconnect(time, UserId(s.user_id.0));
-					}
+// 					None
+// 				},
+// 				EventContext::ClientConnect(s) => {
+// 					if let Some(trace) = &mut *self.trace.write().await {
+// 						trace.client_connect(time, s.audio_ssrc, UserId(s.user_id.0));
+// 					}
 
-					None
-				},
-				EventContext::SpeakingUpdate(su) => {
-					if let Some(trace) = &mut *self.trace.write().await {
-						trace.speaking(time, su.ssrc, su.speaking);
-					}
+// 					None
+// 				},
+// 				EventContext::ClientDisconnect(s) => {
+// 					if let Some(trace) = &mut *self.trace.write().await {
+// 						trace.client_disconnect(time, UserId(s.user_id.0));
+// 					}
 
-					None
-				},
-				EventContext::DriverConnect(d) | EventContext::DriverReconnect(d) => {
-					if let Some(trace) = &mut *self.trace.write().await {
-						trace.add_my_ssrc(d.ssrc);
+// 					None
+// 				},
+// 				EventContext::SpeakingUpdate(su) => {
+// 					if let Some(trace) = &mut *self.trace.write().await {
+// 						trace.speaking(time, su.ssrc, su.speaking);
+// 					}
 
-						trace.change_server(time, d.server.to_string())
-					}
+// 					None
+// 				},
+// 				EventContext::DriverConnect(d) | EventContext::DriverReconnect(d) => {
+// 					if let Some(trace) = &mut *self.trace.write().await {
+// 						trace.add_my_ssrc(d.ssrc);
 
-					None
-				},
-				_ => None,
-			}
-		}
-	}
-}
+// 						trace.change_server(time, d.server.to_string())
+// 					}
+
+// 					None
+// 				},
+// 				_ => None,
+// 			}
+// 		}
+// 	}
+// }
 
 impl Drop for VoiceHuntReceiver {
 	fn drop(&mut self) {
@@ -261,46 +259,47 @@ pub async fn listen_in(
 	initial_user_count: usize,
 	ctx: Context,
 ) -> Option<Sender<ReceiverSignal>> {
-	if opt_in.opted_out() {
-		None
-	} else {
-		let vhr = VoiceHuntReceiver::new(
-			opt_in,
-			gather_mode,
-			user_states,
-			guild_id,
-			channel_id,
-			guild_state,
-			making_noise,
-			initial_user_count,
-			ctx,
-		)
-		.await;
-		let out_tx = vhr.tx.clone();
+	None
+	// if opt_in.opted_out() {
+	// 	None
+	// } else {
+	// 	let vhr = VoiceHuntReceiver::new(
+	// 		opt_in,
+	// 		gather_mode,
+	// 		user_states,
+	// 		guild_id,
+	// 		channel_id,
+	// 		guild_state,
+	// 		making_noise,
+	// 		initial_user_count,
+	// 		ctx,
+	// 	)
+	// 	.await;
+	// 	let out_tx = vhr.tx.clone();
 
-		let n_vhr = vhr.clone();
-		handler.add_global_event(CoreEvent::SpeakingStateUpdate.into(), n_vhr);
+	// 	let n_vhr = vhr.clone();
+	// 	handler.add_global_event(CoreEvent::SpeakingStateUpdate.into(), n_vhr);
 
-		let n_vhr = vhr.clone();
-		handler.add_global_event(CoreEvent::VoicePacket.into(), n_vhr);
+	// 	let n_vhr = vhr.clone();
+	// 	handler.add_global_event(CoreEvent::VoicePacket.into(), n_vhr);
 
-		let n_vhr = vhr.clone();
-		handler.add_global_event(CoreEvent::RtcpPacket.into(), n_vhr);
+	// 	let n_vhr = vhr.clone();
+	// 	handler.add_global_event(CoreEvent::RtcpPacket.into(), n_vhr);
 
-		let n_vhr = vhr.clone();
-		handler.add_global_event(CoreEvent::ClientConnect.into(), n_vhr);
+	// 	let n_vhr = vhr.clone();
+	// 	handler.add_global_event(CoreEvent::ClientConnect.into(), n_vhr);
 
-		let n_vhr = vhr.clone();
-		handler.add_global_event(CoreEvent::ClientDisconnect.into(), n_vhr);
+	// 	let n_vhr = vhr.clone();
+	// 	handler.add_global_event(CoreEvent::ClientDisconnect.into(), n_vhr);
 
-		let n_vhr = vhr.clone();
-		handler.add_global_event(CoreEvent::DriverConnect.into(), n_vhr);
+	// 	let n_vhr = vhr.clone();
+	// 	handler.add_global_event(CoreEvent::DriverConnect.into(), n_vhr);
 
-		let n_vhr = vhr.clone();
-		handler.add_global_event(CoreEvent::DriverReconnect.into(), n_vhr);
+	// 	let n_vhr = vhr.clone();
+	// 	handler.add_global_event(CoreEvent::DriverReconnect.into(), n_vhr);
 
-		handler.add_global_event(CoreEvent::SpeakingUpdate.into(), vhr);
+	// 	handler.add_global_event(CoreEvent::SpeakingUpdate.into(), vhr);
 
-		Some(out_tx)
-	}
+	// 	Some(out_tx)
+	// }
 }

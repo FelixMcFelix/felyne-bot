@@ -15,6 +15,7 @@ use crate::{
 };
 
 use serenity::{
+	builder::CreateMessage,
 	client::*,
 	framework::standard::{macros::command, Args, CommandResult},
 	model::prelude::*,
@@ -26,7 +27,7 @@ use std::sync::Arc;
 #[description = "Nya! (See all the ways I'm acting for this server!)"]
 #[owner_privilege]
 pub async fn see_config(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
-	let guild = match msg.guild(&ctx.cache).await {
+	let guild = match msg.guild_id {
 		Some(c) => c,
 		None => {
 			return confused(&ctx, &msg).await;
@@ -38,14 +39,18 @@ pub async fn see_config(ctx: &Context, msg: &Message, _args: Args) -> CommandRes
 		Arc::clone(data.get::<GuildStates>().unwrap())
 	};
 
-	let reply_txt = if let Some(state) = gs.get(&guild.id) {
+	let reply_txt = if let Some(state) = gs.get(&guild) {
 		let lock = state.read().await;
 		lock.to_message()
 	} else {
 		"Hiss... (I couldn't find any relevant info for your server...)".into()
 	};
 
-	check_msg(msg.author.dm(&ctx, |m| m.content(reply_txt)).await);
+	check_msg(
+		msg.author
+			.dm(&ctx, CreateMessage::new().content(reply_txt))
+			.await,
+	);
 
 	Ok(())
 }
@@ -64,10 +69,10 @@ pub async fn log_to(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
 	let out_chan = out_chan.unwrap();
 
 	// Get the guild ID.
-	let guild_id = match msg.guild(&ctx.cache).await {
-		Some(c) => c.id,
+	let guild_id = match msg.guild_id {
+		Some(c) => c,
 		None => {
-			return confused(&ctx, msg).await;
+			return confused(&ctx, &msg).await;
 		},
 	};
 
@@ -96,10 +101,10 @@ pub async fn felyne_prefix(ctx: &Context, msg: &Message, mut args: Args) -> Comm
 	let new_prefix = new_prefix.unwrap();
 
 	// Get the guild ID.
-	let guild_id = match msg.guild(&ctx.cache).await {
-		Some(c) => c.id,
+	let guild_id = match msg.guild_id {
+		Some(c) => c,
 		None => {
-			return confused(&ctx, msg).await;
+			return confused(&ctx, &msg).await;
 		},
 	};
 
@@ -275,7 +280,7 @@ pub async fn server_ack(ctx: &Context, msg: &Message, args: Args) -> CommandResu
 		let new_str = args.rest().trim();
 		let ack = if !new_str.is_empty() {
 			new_str.to_string()
-		} else if let Some(g) = msg.guild(ctx).await {
+		} else if let Some(g) = msg.guild(&ctx.cache) {
 			g.name.clone()
 		} else {
 			"".into()
@@ -387,7 +392,7 @@ pub async fn server_label(ctx: &Context, msg: &Message, mut args: Args) -> Comma
 #[description = "Mya!? (You want me to forget what kinda place this server is?)"]
 #[owner_privilege]
 pub async fn server_unlabel(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
-	let guild = match msg.guild(&ctx.cache).await {
+	let guild = match msg.guild_id {
 		Some(c) => c,
 		None => {
 			return confused(&ctx, &msg).await;
@@ -399,7 +404,7 @@ pub async fn server_unlabel(ctx: &Context, msg: &Message, _args: Args) -> Comman
 		Arc::clone(data.get::<GuildStates>().unwrap())
 	};
 
-	if let Some(state) = gs.get(&guild.id) {
+	if let Some(state) = gs.get(&guild) {
 		let mut lock = state.write().await;
 		lock.remove_label().await;
 	}

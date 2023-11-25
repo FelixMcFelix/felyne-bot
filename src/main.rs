@@ -22,9 +22,8 @@ use crate::{
 };
 use dashmap::DashMap;
 use serenity::{
-	client::{bridge::gateway::GatewayIntents, *},
-	framework::standard::StandardFramework,
-	http::client::Http,
+	framework::standard::{Configuration, StandardFramework},
+	http::Http,
 	model::prelude::*,
 	prelude::*,
 };
@@ -76,7 +75,7 @@ async fn main() {
 
 	let token_raw = bot_config.token.as_str().trim();
 
-	validate_token(&token_raw).expect("Naa nya! (Token invalid!)");
+	serenity::utils::validate_token(&token_raw).expect("Naa nya! (Token invalid!)");
 
 	// Init the Database
 	let db = match db_conn(&bot_config.database).await {
@@ -88,14 +87,17 @@ async fn main() {
 	};
 
 	let (owners, bot_id) = {
-		let http = Http::new_with_token(&token_raw);
+		let http = Http::new(&token_raw);
 
 		match http.get_current_application_info().await {
 			Ok(info) => {
 				let mut owners = HashSet::new();
-				owners.insert(info.owner.id);
 
-				(owners, info.id)
+				if let Some(owner) = info.owner {
+					owners.insert(owner.id);
+				}
+
+				(owners, UserId::new(info.id.get()))
 			},
 			Err(why) => panic!("Could not access application info: {:?}", why),
 		}
@@ -103,55 +105,56 @@ async fn main() {
 
 	let move_owners = owners.clone();
 
+	let config = Configuration::new()
+		.dynamic_prefix(|ctx, msg| {
+			Box::pin(async move {
+				let gs = {
+					let data = ctx.data.read().await;
+					Arc::clone(data.get::<GuildStates>().unwrap())
+				};
+
+				let id = if let Some(guild) = msg.guild(&ctx.cache) {
+					guild.id
+				} else {
+					return None;
+				};
+
+				let out = if let Some(state) = gs.get(&id) {
+					let lock = state.read().await;
+					lock.custom_prefix()
+						.as_ref()
+						.cloned()
+						.unwrap_or_else(|| "!".to_string())
+				} else {
+					"!".to_string()
+				};
+
+				Some(out)
+			})
+		})
+		.on_mention(Some(bot_id))
+		.owners(move_owners)
+		.case_insensitivity(true);
+
 	// Establish the bot's config, register all our commands...
 	let framework = StandardFramework::new()
-		.configure(|c| {
-			c.prefix("")
-				.dynamic_prefix(|ctx, msg| {
-					Box::pin(async move {
-						let gs = {
-							let data = ctx.data.read().await;
-							Arc::clone(data.get::<GuildStates>().unwrap())
-						};
-
-						let id = if let Some(guild) = msg.guild(&ctx.cache).await {
-							guild.id
-						} else {
-							return None;
-						};
-
-						let out = if let Some(state) = gs.get(&id) {
-							let lock = state.read().await;
-							lock.custom_prefix()
-								.as_ref()
-								.cloned()
-								.unwrap_or_else(|| "!".to_string())
-						} else {
-							"!".to_string()
-						};
-
-						Some(out)
-					})
-				})
-				.on_mention(Some(bot_id))
-				.owners(move_owners)
-				.case_insensitivity(true)
-		})
 		.group(&commands::EVERYONE_GROUP)
 		.group(&commands::CONTROL_GROUP)
 		.group(&commands::ADMIN_GROUP)
 		.help(&commands::MY_HELP);
 
-	let client = Client::builder(&token_raw)
-		.event_handler(event_handler::FelyneEvts)
-		.framework(framework)
-		.register_songbird()
-		.intents(
-			GatewayIntents::GUILDS
-				| GatewayIntents::GUILD_MESSAGES
-				| GatewayIntents::GUILD_VOICE_STATES,
-		)
-		.await;
+	framework.configure(config);
+
+	let client = Client::builder(
+		&token_raw,
+		GatewayIntents::GUILDS
+			| GatewayIntents::GUILD_MESSAGES
+			| GatewayIntents::GUILD_VOICE_STATES,
+	)
+	.event_handler(event_handler::FelyneEvts)
+	.framework(framework)
+	.register_songbird()
+	.await;
 
 	if let Err(e) = &client {
 		println!("MRAOWR! ({})", e);
@@ -175,7 +178,10 @@ async fn main() {
 	}
 
 	// Now, log in.
-	client.start_shards(2).await.expect("Argh! I couldn't connyect?!");
+	client
+		.start_shards(2)
+		.await
+		.expect("Argh! I couldn't connyect?!");
 
 	println!("Uh");
 }
