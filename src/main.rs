@@ -149,6 +149,7 @@ async fn main() {
 		&token_raw,
 		GatewayIntents::GUILDS
 			| GatewayIntents::GUILD_MESSAGES
+			| GatewayIntents::MESSAGE_CONTENT
 			| GatewayIntents::GUILD_VOICE_STATES,
 	)
 	.event_handler(event_handler::FelyneEvts)
