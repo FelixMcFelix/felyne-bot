@@ -22,6 +22,25 @@ use std::{
 use tokio::time;
 use tracing::*;
 
+struct TrackErrorNotifier;
+
+#[async_trait]
+impl EventHandler for TrackErrorNotifier {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        if let EventContext::Track(track_list) = ctx {
+            for (state, handle) in *track_list {
+                println!(
+                    "Track {:?} encountered an error: {:?}",
+                    handle.uuid(),
+                    state.playing
+                );
+            }
+        }
+
+        None
+    }
+}
+
 pub struct VoiceHunt;
 
 impl TypeMapKey for VoiceHunt {
@@ -684,6 +703,8 @@ async fn felyne_life(
 							ctx.clone(),
 						)
 						.await;
+
+						manager.add_global_event(TrackEvent::Error.into(), TrackErrorNotifier);
 
 						let state = if let Some(s) = bgm_machine.advance(BgmInput::TryIntro) {
 							sfx_machine.cause_cooldown(
